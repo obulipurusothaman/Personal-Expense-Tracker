@@ -9,8 +9,8 @@
   <title>Pennywise — Personal finance</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/icons/pennywise-192.png">
-  <link rel="stylesheet" href="/styles.css?v=3">
-  <script src="/app.js?v=3" defer></script>
+  <link rel="stylesheet" href="/styles.css?v=4">
+  <script src="/app.js?v=4" defer></script>
 </head>
 <body>
   <main id="startup-screen" class="startup-screen" aria-live="polite">
@@ -58,6 +58,7 @@
           <p class="page-subtitle">A little clarity goes a long way.</p>
         </div>
         <div class="topbar-actions">
+          <button class="button button-quiet" id="open-device-link" type="button">Link device</button>
           <button class="button button-quiet" id="install-app" type="button">Install app</button>
           <label class="period-control">
             <span class="sr-only">Choose reporting period</span>
@@ -171,6 +172,24 @@
       <div class="modal-header"><div><div class="eyebrow">MAKE IT YOURS</div><h2>Create a category</h2></div><button type="button" class="close-button" data-close="category-dialog" aria-label="Close">×</button></div>
       <label class="field-label">Category name<input name="name" maxlength="40" required placeholder="e.g. Learning"></label>
       <div class="modal-actions"><button type="button" class="button button-quiet" data-close="category-dialog">Cancel</button><button class="button button-primary" type="submit">Save category</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="device-link-dialog" class="modal">
+    <form id="device-link-form" class="modal-form">
+      <div class="modal-header"><div><div class="eyebrow">PRIVATE DEVICE LINK</div><h2>Link a device</h2></div><button type="button" class="close-button" data-close="device-link-dialog" aria-label="Close">×</button></div>
+      <p class="field-help">Generate a one-time code here to link your phone, or enter a code from another device. Linking switches this browser to that profile; existing data is not merged.</p>
+      <label class="field-label">One-time code<input name="code" maxlength="20" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" placeholder="ABCD-EFGH-JKLM"></label>
+      <p id="device-link-message" class="device-link-message" role="alert"></p>
+      <div id="device-link-result" class="device-link-result" hidden role="status" aria-live="polite">
+        <span>Code expires in 10 minutes. Use it only on your own device.</span>
+        <strong id="device-link-code"></strong>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="button button-quiet" data-close="device-link-dialog">Close</button>
+        <button type="button" class="button button-quiet" id="generate-device-link">Generate code</button>
+        <button class="button button-primary" type="submit">Link this device</button>
+      </div>
     </form>
   </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>

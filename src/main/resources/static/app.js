@@ -304,6 +304,43 @@ $("#category-form").addEventListener("submit", (event) => {
   submitForm(event.currentTarget, "/api/categories", "New category saved.", refreshDashboard);
 });
 
+$("#open-device-link").addEventListener("click", () => {
+  $("#device-link-form").reset();
+  $("#device-link-message").textContent = "";
+  $("#device-link-result").hidden = true;
+  openDialog("device-link-dialog");
+});
+
+$("#generate-device-link").addEventListener("click", async () => {
+  $("#device-link-message").textContent = "";
+  try {
+    const result = await api("/api/auth/device-link-codes", { method: "POST" });
+    $("#device-link-code").textContent = result.code;
+    $("#device-link-result").hidden = false;
+  } catch (error) {
+    $("#device-link-message").textContent = error.message;
+  }
+});
+
+$("#device-link-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  $("#device-link-message").textContent = "";
+  const formData = new FormData(event.currentTarget);
+  try {
+    await api("/api/auth/device-links", {
+      method: "POST",
+      body: JSON.stringify({ code: String(formData.get("code")).trim() })
+    });
+    state.accountId = "";
+    state.categoryId = "";
+    $("#device-link-dialog").close();
+    await refreshDashboard();
+    showToast("This device now uses the linked private data.");
+  } catch (error) {
+    $("#device-link-message").textContent = error.message;
+  }
+});
+
 $("#retry-app").addEventListener("click", () => window.location.reload());
 
 async function installApp() {

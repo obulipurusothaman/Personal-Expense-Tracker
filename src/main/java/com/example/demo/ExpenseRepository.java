@@ -9,6 +9,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface ExpenseRepository extends JpaRepository<Expense, Long> {
 	void deleteByAccount_Id(Long accountId);
 
+	boolean existsByAccount_Owner_Id(Long ownerId);
+
 	Optional<Expense> findByIdAndAccount_Owner_Id(Long id, Long ownerId);
 
 	List<Expense> findByAccount_Owner_IdAndExpenseDateBetweenOrderByExpenseDateDescIdDesc(

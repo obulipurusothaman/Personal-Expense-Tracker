@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.math.BigDecimal;
 
@@ -17,6 +18,7 @@ import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.server.ResponseStatusException;
 
 import jakarta.servlet.http.Cookie;
 
@@ -41,11 +43,19 @@ class BrowserProfileTests {
 	@Autowired
 	private ExpenseRepository expenseRepository;
 
+	@Autowired
+	private BrowserProfileTokenRepository browserProfileTokenRepository;
+
+	@Autowired
+	private DeviceLinkCodeRepository deviceLinkCodeRepository;
+
 	@BeforeEach
 	void clearData() {
 		expenseRepository.deleteAll();
 		accountRepository.deleteAll();
 		categoryRepository.deleteAll();
+		deviceLinkCodeRepository.deleteAll();
+		browserProfileTokenRepository.deleteAll();
 		userRepository.deleteAll();
 	}
 
@@ -111,5 +121,32 @@ class BrowserProfileTests {
 		assertTrue(cookie.contains("HttpOnly"));
 		assertTrue(cookie.contains("SameSite=Lax"));
 		assertTrue(cookie.contains("Max-Age=31536000"));
+	}
+
+	@Test
+	void oneTimeCodeLinksASecondDeviceToTheSameProfile() {
+		AppUser owner = browserProfileService.resolve(null).user();
+		DeviceLinkCodeDto linkCode = browserProfileService.createDeviceLinkCode(owner);
+
+		BrowserProfileService.LinkedProfile linkedProfile =
+				browserProfileService.consumeDeviceLinkCode(linkCode.code(), null);
+
+		assertEquals(owner.getId(), linkedProfile.user().getId());
+		assertEquals(owner.getId(), browserProfileService.findByToken(linkedProfile.token()).orElseThrow().getId());
+		assertThrows(ResponseStatusException.class,
+				() -> browserProfileService.consumeDeviceLinkCode(linkCode.code(), null));
+	}
+
+	@Test
+	void linkingDoesNotOverwriteADeviceProfileWithExistingData() {
+		AppUser owner = browserProfileService.resolve(null).user();
+		AppUser existingPhoneProfile = browserProfileService.resolve(null).user();
+		accountRepository.save(new BankAccount("Phone bank", new BigDecimal("100.00"), existingPhoneProfile));
+		DeviceLinkCodeDto linkCode = browserProfileService.createDeviceLinkCode(owner);
+
+		assertThrows(ResponseStatusException.class,
+				() -> browserProfileService.consumeDeviceLinkCode(linkCode.code(), existingPhoneProfile));
+		assertEquals(1, deviceLinkCodeRepository.count());
+		assertEquals(1, accountRepository.findByOwner_Id(existingPhoneProfile.getId()).size());
 	}
 }

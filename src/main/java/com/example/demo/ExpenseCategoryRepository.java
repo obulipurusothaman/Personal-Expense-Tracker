@@ -13,4 +13,6 @@ public interface ExpenseCategoryRepository extends JpaRepository<ExpenseCategory
 	List<ExpenseCategory> findByOwnerIsNull();
 
 	List<ExpenseCategory> findByOwner_Id(Long ownerId);
+
+	boolean existsByOwner_Id(Long ownerId);
 }
