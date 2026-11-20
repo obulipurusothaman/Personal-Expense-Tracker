@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f7fb">
+  <title>Pennywise — Personal finance</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="#" aria-label="Pennywise home">
+        <span class="brand-mark">p</span>
+        <span>Pennywise<span class="brand-dot">.</span></span>
+      </a>
+      <div class="workspace-label">WORKSPACE</div>
+      <nav class="main-nav" aria-label="Main navigation">
+        <a class="nav-link active" href="#overview"><span class="nav-icon">⌂</span>Overview</a>
+        <a class="nav-link" href="#transactions"><span class="nav-icon">↗</span>Transactions</a>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="sidebar-tip">
+          <div class="tip-icon">✳</div>
+          <strong>Small steps add up</strong>
+          <p>Every expense you track is a little more clarity.</p>
+        </div>
+        <div class="profile">
+          <div class="avatar">Y</div>
+          <div><strong>Your wallet</strong><span>Personal account</span></div>
+          <span class="profile-dots">···</span>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow" id="today-label">YOUR MONEY, IN FOCUS</div>
+          <h1>Good day <span class="wave">✦</span></h1>
+          <p class="page-subtitle">A little clarity goes a long way.</p>
+        </div>
+        <div class="topbar-actions">
+          <label class="period-control">
+            <span class="sr-only">Choose reporting period</span>
+            <select id="period-filter">
+              <option value="day">Today</option>
+              <option value="week">This week</option>
+              <option value="month" selected>This month</option>
+              <option value="year">This year</option>
+            </select>
+          </label>
+          <label class="date-control">
+            <span class="sr-only">Choose date</span>
+            <input id="date-filter" type="date">
+          </label>
+          <button class="button button-primary" id="open-expense">
+            <span class="button-plus">+</span> Add expense
+          </button>
+        </div>
+      </header>
+
+      <section id="overview" class="summary-grid" aria-label="Bank balances and spending">
+        <div id="bank-balance-cards" class="bank-balance-cards" aria-label="Individual bank balances"></div>
+        <article class="summary-card spend-card">
+          <div class="summary-heading"><span id="spent-period-label">Spent this month</span><span class="summary-icon lilac">↗</span></div>
+          <div id="total-spent" class="summary-value">₹0</div>
+          <div class="summary-foot"><span class="soft-pill">INR</span><span>Tracked expenses</span></div>
+          <div class="card-decoration spend-decoration"></div>
+        </article>
+        <article class="summary-card accounts-card">
+          <div class="summary-heading"><span>Bank accounts</span><span class="summary-icon peach">▤</span></div>
+          <div id="account-count" class="summary-value">0</div>
+          <div class="summary-foot"><span id="account-caption">Add your first account</span></div>
+          <div class="card-decoration account-decoration"></div>
+        </article>
+      </section>
+
+      <section class="section-block">
+        <div class="section-heading">
+          <div>
+            <div class="eyebrow">YOUR ACCOUNTS</div>
+            <h2>Money, by bank</h2>
+          </div>
+          <button class="button button-quiet" id="open-account"><span class="button-plus">+</span> Add account</button>
+        </div>
+        <div id="accounts-grid" class="accounts-grid"></div>
+      </section>
+
+      <section id="transactions" class="section-block transactions-section">
+        <div class="section-heading">
+          <div>
+            <div class="eyebrow">THE LITTLE THINGS</div>
+            <h2>Recent transactions</h2>
+          </div>
+          <div class="transaction-filters">
+            <button class="button button-quiet" id="open-category"><span class="button-plus">+</span> Category</button>
+            <label>
+              <span class="sr-only">Filter by category</span>
+              <select id="category-filter"><option value="">All categories</option></select>
+            </label>
+            <label>
+              <span class="sr-only">Filter by account</span>
+              <select id="account-filter"><option value="">All accounts</option></select>
+            </label>
+          </div>
+        </div>
+        <div class="table-card">
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>TRANSACTION</th><th>CATEGORY</th><th>ACCOUNT</th><th>DATE</th><th class="amount-heading">AMOUNT</th><th></th></tr></thead>
+              <tbody id="expense-rows"></tbody>
+            </table>
+          </div>
+          <div id="empty-transactions" class="empty-state hidden">
+            <span class="empty-icon">✳</span>
+            <strong>No expenses in this period</strong>
+            <span>Your spending will show up here once you add an expense.</span>
+            <button class="button button-quiet" id="empty-add-expense">Add your first expense</button>
+          </div>
+        </div>
+      </section>
+      <footer class="footer">Made for mindful spending <span>·</span> All amounts in Indian rupees</footer>
+    </main>
+  </div>
+
+  <dialog id="expense-dialog" class="modal">
+    <form id="expense-form" class="modal-form">
+      <div class="modal-header"><div><div class="eyebrow">NEW TRANSACTION</div><h2>Add an expense</h2></div><button type="button" class="close-button" data-close="expense-dialog" aria-label="Close">×</button></div>
+      <label class="field-label">What was it for?<input name="description" maxlength="120" placeholder="e.g. Morning coffee"></label>
+      <div class="field-row">
+        <label class="field-label">Amount <span class="field-suffix">INR</span><input name="amount" type="number" min="0.01" step="0.01" required placeholder="0.00"></label>
+        <label class="field-label">Date<input name="expenseDate" type="date" required></label>
+      </div>
+      <label class="field-label">Category<select name="categoryId" required></select></label>
+      <label class="field-label">Paid from<select name="accountId" required></select></label>
+      <div class="modal-actions"><button type="button" class="button button-quiet" data-close="expense-dialog">Cancel</button><button class="button button-primary" type="submit">Save expense</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="account-dialog" class="modal">
+    <form id="account-form" class="modal-form">
+      <div class="modal-header"><div><div class="eyebrow">YOUR MONEY, TOGETHER</div><h2>Add a bank account</h2></div><button type="button" class="close-button" data-close="account-dialog" aria-label="Close">×</button></div>
+      <label class="field-label">Bank name<input name="bankName" maxlength="80" required placeholder="e.g. HDFC Bank"></label>
+      <label class="field-label">Current balance <span class="field-suffix">INR</span><input name="balance" type="number" min="0" step="0.01" required placeholder="0.00"></label>
+      <p class="field-help">Your starting balance helps you see the full picture across all your accounts.</p>
+      <div class="modal-actions"><button type="button" class="button button-quiet" data-close="account-dialog">Cancel</button><button class="button button-primary" type="submit">Add account</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="category-dialog" class="modal">
+    <form id="category-form" class="modal-form">
+      <div class="modal-header"><div><div class="eyebrow">MAKE IT YOURS</div><h2>Create a category</h2></div><button type="button" class="close-button" data-close="category-dialog" aria-label="Close">×</button></div>
+      <label class="field-label">Category name<input name="name" maxlength="40" required placeholder="e.g. Learning"></label>
+      <div class="modal-actions"><button type="button" class="button button-quiet" data-close="category-dialog">Cancel</button><button class="button button-primary" type="submit">Save category</button></div>
+    </form>
+  </dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
