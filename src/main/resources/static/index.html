@@ -4,12 +4,29 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f6f7fb">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Pennywise">
   <title>Pennywise — Personal finance</title>
-  <link rel="stylesheet" href="/styles.css">
-  <script src="/app.js" defer></script>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icons/pennywise-192.png">
+  <link rel="stylesheet" href="/styles.css?v=3">
+  <script src="/app.js?v=3" defer></script>
 </head>
 <body>
-  <div class="app-shell">
+  <main id="startup-screen" class="startup-screen" aria-live="polite">
+    <section class="startup-card" aria-labelledby="startup-title">
+      <a class="brand startup-brand" href="#" aria-label="Pennywise home">
+        <span class="brand-mark">p</span>
+        <span>Pennywise<span class="brand-dot">.</span></span>
+      </a>
+      <div class="eyebrow">YOUR PERSONAL SPACE</div>
+      <h1 id="startup-title">Opening your wallet</h1>
+      <p id="startup-message" class="startup-message">Preparing a private space for this browser.</p>
+      <button id="retry-app" class="button button-quiet" type="button" hidden>Try again</button>
+    </section>
+  </main>
+
+  <div class="app-shell" id="app-shell" hidden>
     <aside class="sidebar">
       <a class="brand" href="#" aria-label="Pennywise home">
         <span class="brand-mark">p</span>
@@ -28,8 +45,7 @@
         </div>
         <div class="profile">
           <div class="avatar">Y</div>
-          <div><strong>Your wallet</strong><span>Personal account</span></div>
-          <span class="profile-dots">···</span>
+          <div><strong>Your wallet</strong><span>Private to this browser</span></div>
         </div>
       </div>
     </aside>
@@ -42,6 +58,7 @@
           <p class="page-subtitle">A little clarity goes a long way.</p>
         </div>
         <div class="topbar-actions">
+          <button class="button button-quiet" id="install-app" type="button">Install app</button>
           <label class="period-control">
             <span class="sr-only">Choose reporting period</span>
             <select id="period-filter">

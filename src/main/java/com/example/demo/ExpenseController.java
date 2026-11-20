@@ -12,6 +12,7 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -38,64 +39,72 @@ public class ExpenseController {
 
 	@GetMapping("/dashboard")
 	public DashboardDto dashboard(
+			@AuthenticationPrincipal AppUser owner,
 			@RequestParam(defaultValue = "month") String period,
 			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-		return expenseService.getDashboard(period, date);
+		return expenseService.getDashboard(owner, period, date);
 	}
 
 	@GetMapping("/accounts")
-	public List<AccountDto> accounts() {
-		return expenseService.getAccounts();
+	public List<AccountDto> accounts(@AuthenticationPrincipal AppUser owner) {
+		return expenseService.getAccounts(owner);
 	}
 
 	@PostMapping("/accounts")
-	public ResponseEntity<AccountDto> createAccount(@Valid @RequestBody AccountRequest request) {
-		return ResponseEntity.status(201).body(expenseService.createAccount(request));
+	public ResponseEntity<AccountDto> createAccount(
+			@AuthenticationPrincipal AppUser owner, @Valid @RequestBody AccountRequest request) {
+		return ResponseEntity.status(201).body(expenseService.createAccount(owner, request));
 	}
 
 	@DeleteMapping("/accounts/{accountId}")
-	public ResponseEntity<Void> deleteAccount(@PathVariable Long accountId) {
-		expenseService.deleteAccount(accountId);
+	public ResponseEntity<Void> deleteAccount(
+			@AuthenticationPrincipal AppUser owner, @PathVariable Long accountId) {
+		expenseService.deleteAccount(owner, accountId);
 		return ResponseEntity.noContent().build();
 	}
 
 	@GetMapping("/categories")
-	public List<CategoryDto> categories() {
-		return expenseService.getCategories();
+	public List<CategoryDto> categories(@AuthenticationPrincipal AppUser owner) {
+		return expenseService.getCategories(owner);
 	}
 
 	@PostMapping("/categories")
-	public ResponseEntity<CategoryDto> createCategory(@Valid @RequestBody CategoryRequest request) {
-		return ResponseEntity.status(201).body(expenseService.createCategory(request));
+	public ResponseEntity<CategoryDto> createCategory(
+			@AuthenticationPrincipal AppUser owner, @Valid @RequestBody CategoryRequest request) {
+		return ResponseEntity.status(201).body(expenseService.createCategory(owner, request));
 	}
 
 	@GetMapping("/expenses")
 	public List<ExpenseDto> expenses(
+			@AuthenticationPrincipal AppUser owner,
 			@RequestParam(required = false) Long accountId,
 			@RequestParam(required = false) Long categoryId,
 			@RequestParam(defaultValue = "month") String period,
 			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-		return expenseService.getAllExpenses(accountId, categoryId, period, date);
+		return expenseService.getAllExpenses(owner, accountId, categoryId, period, date);
 	}
 
 	@PostMapping("/expenses")
-	public ResponseEntity<ExpenseDto> createExpense(@Valid @RequestBody ExpenseRequest request) {
-		return ResponseEntity.status(201).body(expenseService.createExpense(request));
+	public ResponseEntity<ExpenseDto> createExpense(
+			@AuthenticationPrincipal AppUser owner, @Valid @RequestBody ExpenseRequest request) {
+		return ResponseEntity.status(201).body(expenseService.createExpense(owner, request));
 	}
 
 	@DeleteMapping("/expenses/{expenseId}")
-	public ResponseEntity<Void> deleteExpense(@PathVariable Long expenseId) {
-		expenseService.deleteExpense(expenseId);
+	public ResponseEntity<Void> deleteExpense(
+			@AuthenticationPrincipal AppUser owner, @PathVariable Long expenseId) {
+		expenseService.deleteExpense(owner, expenseId);
 		return ResponseEntity.noContent().build();
 	}
 
 	@GetMapping("/accounts/{accountId}/export")
 	public ResponseEntity<byte[]> exportAccountExpenses(
+			@AuthenticationPrincipal AppUser owner,
 			@PathVariable Long accountId,
 			@RequestParam(defaultValue = "month") String period,
 			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date)
 			throws IOException {
-		List<ExpenseDto> expenses = expenseService.getExpenses(accountId, null, period, date);
+		List<ExpenseDto> expenses = expenseService.getExpenses(owner, accountId, null, period, date);
 		byte[] workbook = createWorkbook(expenses);
 		String fileName = "expenses-account-" + accountId + "-" + period.toLowerCase() + ".xlsx";
 		return ResponseEntity.ok()

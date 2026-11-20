@@ -10,7 +10,7 @@ From the `demo` directory:
 .\gradlew.bat bootRun
 ```
 
-Open [http://localhost:8080](http://localhost:8080). The embedded H2 database is stored under `demo/data/` and keeps accounts, categories, and expenses between restarts.
+Open [http://localhost:8080](http://localhost:8080). The app automatically creates a private profile for that browser; no login is required. On an existing installation with one prior login, its bank accounts, expenses, and custom categories are retained in the first browser profile. The embedded H2 database is stored under `demo/data/` and keeps data between restarts.
 
 Run the test suite with:
 
@@ -26,10 +26,22 @@ Run the test suite with:
 - Browse category spending with daily, weekly, monthly, or yearly date filters.
 - Use the built-in expense categories or create custom categories.
 - View a separate spending pie chart and download an `.xlsx` report for each bank account.
+- Each browser gets its own private profile automatically; data is not shared between browsers or devices.
+- Install the responsive app on a phone as a PWA. Its offline shell does not cache private API data.
+
+## Phone installation and remote testing
+
+The local address is only reachable on the computer running the app. For a temporary cross-network demo, expose it through an HTTPS tunnel. Each person who opens the URL in their own browser gets a separate profile automatically. Anyone using the same browser profile can access its data. A profile is tied to its browser cookie and cannot be recovered if browser data is cleared or the user switches devices. Keep the computer, app, and tunnel running while testing.
+
+- Android: open the HTTPS URL in Chrome and choose **Install app** or **Add to Home screen**.
+- iPhone: open the HTTPS URL in Safari, tap **Share**, then **Add to Home Screen**.
+
+The H2 database remains on the host computer, so this temporary setup is for testing rather than permanent hosting.
 
 ## API
 
 - `GET /api/dashboard?period=month&date=YYYY-MM-DD`
+- `GET /api/auth/csrf`, `GET /api/auth/me` (creates or restores the browser profile)
 - `GET` / `POST /api/accounts`
 - `DELETE /api/accounts/{accountId}` (also deletes that account's expenses)
 - `GET` / `POST /api/categories`

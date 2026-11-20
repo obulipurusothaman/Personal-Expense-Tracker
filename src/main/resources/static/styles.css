@@ -37,7 +37,6 @@ button, select { cursor: pointer; }
 .profile strong, .profile span { display: block; }
 .profile strong { font-size: 11px; }
 .profile span { margin-top: 3px; color: var(--muted); font-size: 10px; }
-.profile .profile-dots { margin: 0 0 0 auto; color: #888da1; font-size: 20px; }
 .main-content { max-width: 1540px; margin-left: 246px; padding: 42px clamp(28px, 5vw, 72px) 25px; }
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 30px; }
 h1, h2, p { margin-top: 0; }
@@ -146,6 +145,12 @@ tbody tr:hover { background: #fcfcfe; }
 .toast.visible { opacity: 1; transform: translateY(0); }
 .toast.error { background: #a94242; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
+.startup-screen { display: grid; min-height: 100vh; place-items: center; padding: 25px; background: radial-gradient(ellipse at 15% 15%, #eeebff 0, transparent 38%), radial-gradient(ellipse at 85% 85%, #e8f5f0 0, transparent 34%), var(--canvas); }
+.startup-screen[hidden] { display: none; }
+.startup-card { width: min(420px, 100%); padding: 34px; border: 1px solid #ececf4; border-radius: 17px; background: white; box-shadow: 0 20px 60px rgba(37, 39, 68, .09); }
+.startup-brand { margin: 0 0 35px; }
+.startup-card h1 { margin: 8px 0; font-size: 25px; }
+.startup-message { margin: 0 0 24px; color: var(--muted); font-size: 12px; line-height: 1.6; }
 
 @media (max-width: 1050px) {
   .sidebar { width: 210px; }
@@ -179,4 +184,5 @@ tbody tr:hover { background: #fcfcfe; }
   .transaction-filters select { width: 100%; }
   th, td { padding-right: 12px; padding-left: 12px; }
   .date-control input { width: 130px; }
+  .startup-card { padding: 27px 22px; }
 }

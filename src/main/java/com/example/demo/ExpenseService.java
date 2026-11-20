@@ -19,56 +19,64 @@ public class ExpenseService {
 	private final BankAccountRepository accountRepository;
 	private final ExpenseCategoryRepository categoryRepository;
 	private final ExpenseRepository expenseRepository;
+	private final AppUserRepository userRepository;
 
 	public ExpenseService(BankAccountRepository accountRepository, ExpenseCategoryRepository categoryRepository,
-			ExpenseRepository expenseRepository) {
+			ExpenseRepository expenseRepository, AppUserRepository userRepository) {
 		this.accountRepository = accountRepository;
 		this.categoryRepository = categoryRepository;
 		this.expenseRepository = expenseRepository;
+		this.userRepository = userRepository;
 	}
 
 	@Transactional(readOnly = true)
-	public List<AccountDto> getAccounts() {
-		return accountRepository.findAll().stream().map(AccountDto::from).toList();
+	public List<AccountDto> getAccounts(AppUser owner) {
+		return accountRepository.findByOwner_Id(owner.getId()).stream().map(AccountDto::from).toList();
 	}
 
 	@Transactional
-	public AccountDto createAccount(AccountRequest request) {
+	public AccountDto createAccount(AppUser owner, AccountRequest request) {
 		BankAccount account = accountRepository.save(
-				new BankAccount(request.bankName().trim(), request.balance()));
+				new BankAccount(request.bankName().trim(), request.balance(),
+						userRepository.getReferenceById(owner.getId())));
 		return AccountDto.from(account);
 	}
 
 	@Transactional
-	public void deleteAccount(Long accountId) {
-		BankAccount account = requireAccount(accountId);
-		expenseRepository.deleteByAccountId(accountId);
+	public void deleteAccount(AppUser owner, Long accountId) {
+		BankAccount account = requireAccount(owner.getId(), accountId);
+		expenseRepository.deleteByAccount_Id(accountId);
 		accountRepository.delete(account);
 	}
 
 	@Transactional(readOnly = true)
-	public List<CategoryDto> getCategories() {
-		return categoryRepository.findAll().stream()
+	public List<CategoryDto> getCategories(AppUser owner) {
+		List<ExpenseCategory> categories = new ArrayList<>(categoryRepository.findByOwnerIsNull());
+		categories.addAll(categoryRepository.findByOwner_Id(owner.getId()));
+		return categories.stream()
 				.sorted(Comparator.comparing(ExpenseCategory::getName, String.CASE_INSENSITIVE_ORDER))
 				.map(CategoryDto::from)
 				.toList();
 	}
 
 	@Transactional
-	public CategoryDto createCategory(CategoryRequest request) {
+	public CategoryDto createCategory(AppUser owner, CategoryRequest request) {
 		String name = request.name().trim();
 		if (categoryRepository.existsByNameIgnoreCase(name)) {
 			throw new ResponseStatusException(HttpStatus.CONFLICT, "That category already exists");
 		}
-		return CategoryDto.from(categoryRepository.save(new ExpenseCategory(name)));
+		return CategoryDto.from(categoryRepository.save(new ExpenseCategory(
+				name, userRepository.getReferenceById(owner.getId()))));
 	}
 
 	@Transactional
-	public ExpenseDto createExpense(ExpenseRequest request) {
-		BankAccount account = accountRepository.findById(request.accountId())
-				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Bank account not found"));
+	public ExpenseDto createExpense(AppUser owner, ExpenseRequest request) {
+		BankAccount account = requireAccount(owner.getId(), request.accountId());
 		ExpenseCategory category = categoryRepository.findById(request.categoryId())
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Category not found"));
+		if (category.getOwner() != null && !category.getOwner().getId().equals(owner.getId())) {
+			throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Category not found");
+		}
 		String description = request.description() == null || request.description().isBlank()
 				? category.getName()
 				: request.description().trim();
@@ -80,8 +88,8 @@ public class ExpenseService {
 	}
 
 	@Transactional
-	public void deleteExpense(Long expenseId) {
-		Expense expense = expenseRepository.findById(expenseId)
+	public void deleteExpense(AppUser owner, Long expenseId) {
+		Expense expense = expenseRepository.findByIdAndAccount_Owner_Id(expenseId, owner.getId())
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Expense not found"));
 		BankAccount account = expense.getAccount();
 		account.setBalance(account.getBalance().add(expense.getAmount()));
@@ -90,37 +98,38 @@ public class ExpenseService {
 
 	@Transactional(readOnly = true)
 	public List<ExpenseDto> getExpenses(
-			Long accountId, Long categoryId, String period, LocalDate date) {
-		requireAccount(accountId);
+			AppUser owner, Long accountId, Long categoryId, String period, LocalDate date) {
+		requireAccount(owner.getId(), accountId);
 		PeriodRange range = PeriodRange.from(period, date);
 		List<Expense> expenses = categoryId == null
-				? expenseRepository.findByAccountIdAndExpenseDateBetweenOrderByExpenseDateDescIdDesc(
-						accountId, range.startDate(), range.endDate())
-				: expenseRepository.findByAccountIdAndCategoryIdAndExpenseDateBetweenOrderByExpenseDateDescIdDesc(
-						accountId, categoryId, range.startDate(), range.endDate());
+				? expenseRepository.findByAccount_Owner_IdAndAccount_IdAndExpenseDateBetweenOrderByExpenseDateDescIdDesc(
+						owner.getId(), accountId, range.startDate(), range.endDate())
+				: expenseRepository.findByAccount_Owner_IdAndAccount_IdAndCategory_IdAndExpenseDateBetweenOrderByExpenseDateDescIdDesc(
+						owner.getId(), accountId, categoryId, range.startDate(), range.endDate());
 		return expenses.stream().map(ExpenseDto::from).toList();
 	}
 
 	@Transactional(readOnly = true)
-	public List<ExpenseDto> getAllExpenses(Long accountId, Long categoryId, String period, LocalDate date) {
+	public List<ExpenseDto> getAllExpenses(
+			AppUser owner, Long accountId, Long categoryId, String period, LocalDate date) {
 		if (accountId != null) {
-			return getExpenses(accountId, categoryId, period, date);
+			return getExpenses(owner, accountId, categoryId, period, date);
 		}
 		PeriodRange range = PeriodRange.from(period, date);
 		List<Expense> expenses = categoryId == null
-				? expenseRepository.findByExpenseDateBetweenOrderByExpenseDateDescIdDesc(
-						range.startDate(), range.endDate())
-				: expenseRepository.findByCategoryIdAndExpenseDateBetweenOrderByExpenseDateDescIdDesc(
-						categoryId, range.startDate(), range.endDate());
+				? expenseRepository.findByAccount_Owner_IdAndExpenseDateBetweenOrderByExpenseDateDescIdDesc(
+						owner.getId(), range.startDate(), range.endDate())
+				: expenseRepository.findByAccount_Owner_IdAndCategory_IdAndExpenseDateBetweenOrderByExpenseDateDescIdDesc(
+						owner.getId(), categoryId, range.startDate(), range.endDate());
 		return expenses.stream().map(ExpenseDto::from).toList();
 	}
 
 	@Transactional(readOnly = true)
-	public DashboardDto getDashboard(String period, LocalDate date) {
+	public DashboardDto getDashboard(AppUser owner, String period, LocalDate date) {
 		PeriodRange range = PeriodRange.from(period, date);
-		List<BankAccount> accounts = accountRepository.findAll();
-		List<Expense> expenses = expenseRepository.findByExpenseDateBetweenOrderByExpenseDateDescIdDesc(
-				range.startDate(), range.endDate());
+		List<BankAccount> accounts = accountRepository.findByOwner_Id(owner.getId());
+		List<Expense> expenses = expenseRepository.findByAccount_Owner_IdAndExpenseDateBetweenOrderByExpenseDateDescIdDesc(
+				owner.getId(), range.startDate(), range.endDate());
 		Map<Long, List<Expense>> expensesByAccount = new LinkedHashMap<>();
 		for (Expense expense : expenses) {
 			expensesByAccount.computeIfAbsent(expense.getAccount().getId(), ignored -> new ArrayList<>()).add(expense);
@@ -149,11 +158,11 @@ public class ExpenseService {
 					account.getId(), account.getBankName(), account.getBalance(), spent, breakdown, recent);
 		}).toList();
 
-		return new DashboardDto(totalSpent, summaries, getCategories());
+		return new DashboardDto(totalSpent, summaries, getCategories(owner));
 	}
 
-	private BankAccount requireAccount(Long accountId) {
-		return accountRepository.findById(accountId)
+	private BankAccount requireAccount(Long ownerId, Long accountId) {
+		return accountRepository.findByIdAndOwner_Id(accountId, ownerId)
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Bank account not found"));
 	}
 }

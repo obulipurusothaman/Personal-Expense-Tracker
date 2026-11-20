@@ -9,6 +9,11 @@ import org.springframework.stereotype.Component;
 @Component
 public class DefaultCategories implements ApplicationRunner {
 
+	public static final List<String> NAMES = List.of(
+			"Snacks", "Tea", "Coffee", "Breakfast", "Dinner", "Lunch", "Transport",
+			"Mobile Recharge", "Entertainment", "Sports", "Groceries", "Medicine",
+			"Fruits", "Clothes", "Others");
+
 	private final ExpenseCategoryRepository categoryRepository;
 
 	public DefaultCategories(ExpenseCategoryRepository categoryRepository) {
@@ -17,14 +22,14 @@ public class DefaultCategories implements ApplicationRunner {
 
 	@Override
 	public void run(ApplicationArguments args) {
-		List<String> defaults = List.of(
-				"Snacks", "Tea", "Coffee", "Breakfast", "Dinner", "Lunch", "Transport",
-				"Mobile Recharge", "Entertainment", "Sports", "Groceries", "Medicine",
-				"Fruits", "Clothes", "Others");
-		for (String name : defaults) {
-			if (!categoryRepository.existsByNameIgnoreCase(name)) {
-				categoryRepository.save(new ExpenseCategory(name));
-			}
+		for (String name : NAMES) {
+			ExpenseCategory category = categoryRepository.findByNameIgnoreCase(name)
+					.orElseGet(() -> new ExpenseCategory(name, null));
+			categoryRepository.save(category);
 		}
+	}
+
+	public static boolean isBuiltIn(String categoryName) {
+		return NAMES.stream().anyMatch(name -> name.equalsIgnoreCase(categoryName));
 	}
 }

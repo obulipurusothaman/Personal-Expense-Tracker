@@ -2,20 +2,24 @@ package com.example.demo;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface ExpenseRepository extends JpaRepository<Expense, Long> {
-	void deleteByAccountId(Long accountId);
+	void deleteByAccount_Id(Long accountId);
 
-	List<Expense> findByAccountIdAndExpenseDateBetweenOrderByExpenseDateDescIdDesc(
-			Long accountId, LocalDate startDate, LocalDate endDate);
+	Optional<Expense> findByIdAndAccount_Owner_Id(Long id, Long ownerId);
 
-	List<Expense> findByAccountIdAndCategoryIdAndExpenseDateBetweenOrderByExpenseDateDescIdDesc(
-			Long accountId, Long categoryId, LocalDate startDate, LocalDate endDate);
+	List<Expense> findByAccount_Owner_IdAndExpenseDateBetweenOrderByExpenseDateDescIdDesc(
+			Long ownerId, LocalDate startDate, LocalDate endDate);
 
-	List<Expense> findByExpenseDateBetweenOrderByExpenseDateDescIdDesc(LocalDate startDate, LocalDate endDate);
+	List<Expense> findByAccount_Owner_IdAndAccount_IdAndExpenseDateBetweenOrderByExpenseDateDescIdDesc(
+			Long ownerId, Long accountId, LocalDate startDate, LocalDate endDate);
 
-	List<Expense> findByCategoryIdAndExpenseDateBetweenOrderByExpenseDateDescIdDesc(
-			Long categoryId, LocalDate startDate, LocalDate endDate);
+	List<Expense> findByAccount_Owner_IdAndAccount_IdAndCategory_IdAndExpenseDateBetweenOrderByExpenseDateDescIdDesc(
+			Long ownerId, Long accountId, Long categoryId, LocalDate startDate, LocalDate endDate);
+
+	List<Expense> findByAccount_Owner_IdAndCategory_IdAndExpenseDateBetweenOrderByExpenseDateDescIdDesc(
+			Long ownerId, Long categoryId, LocalDate startDate, LocalDate endDate);
 }

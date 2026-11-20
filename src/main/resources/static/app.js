@@ -9,6 +9,7 @@ const state = {
 };
 const $ = (selector) => document.querySelector(selector);
 let toastTimer;
+let installPrompt = null;
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({
@@ -27,10 +28,33 @@ function shortDate(value) {
     .format(new Date(`${value}T00:00:00`));
 }
 
+function readCookie(name) {
+  const prefix = `${name}=`;
+  const cookie = document.cookie.split("; ").find((value) => value.startsWith(prefix));
+  return cookie ? decodeURIComponent(cookie.slice(prefix.length)) : "";
+}
+
+async function csrfToken() {
+  const existing = readCookie("XSRF-TOKEN");
+  if (existing) return existing;
+  const response = await fetch("/api/auth/csrf", { credentials: "same-origin" });
+  if (!response.ok) throw new Error("Could not initialize a secure session.");
+  const body = await response.json();
+  return readCookie("XSRF-TOKEN") || body.token;
+}
+
 async function api(url, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+  const headers = new Headers(options.headers || {});
+  if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+    headers.set("X-XSRF-TOKEN", await csrfToken());
+  }
   const response = await fetch(url, {
     ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) }
+    method,
+    credentials: "same-origin",
+    headers
   });
   if (!response.ok) {
     let message = "Something went wrong. Please try again.";
@@ -38,10 +62,25 @@ async function api(url, options = {}) {
       const body = await response.json();
       message = body.detail || body.message || message;
     } catch { /* The response may not contain JSON. */ }
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
   }
   if (response.status === 204) return null;
   return response.json();
+}
+
+function showApp() {
+  $("#startup-screen").hidden = true;
+  $("#app-shell").hidden = false;
+}
+
+function showStartupError(message) {
+  $("#app-shell").hidden = true;
+  $("#startup-screen").hidden = false;
+  $("#startup-title").textContent = "Could not open your wallet";
+  $("#startup-message").textContent = message;
+  $("#retry-app").hidden = false;
 }
 
 function showToast(message, isError = false) {
@@ -265,6 +304,29 @@ $("#category-form").addEventListener("submit", (event) => {
   submitForm(event.currentTarget, "/api/categories", "New category saved.", refreshDashboard);
 });
 
+$("#retry-app").addEventListener("click", () => window.location.reload());
+
+async function installApp() {
+  if (!installPrompt) {
+    showToast("Use your browser menu and choose Install app or Add to Home Screen.");
+    return;
+  }
+  await installPrompt.prompt();
+  installPrompt = null;
+}
+
+$("#install-app").addEventListener("click", installApp);
+
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  installPrompt = event;
+});
+
+window.addEventListener("appinstalled", () => {
+  installPrompt = null;
+  showToast("Pennywise was installed on this device.");
+});
+
 $("#expense-rows").addEventListener("click", async (event) => {
   const button = event.target.closest("[data-expense-id]");
   if (!button) return;
@@ -295,6 +357,17 @@ $("#accounts-grid").addEventListener("click", async (event) => {
   }
 });
 
+async function initializeApp() {
+  try {
+    await csrfToken();
+    await api("/api/auth/me");
+    showApp();
+    await refreshDashboard();
+  } catch (error) {
+    showStartupError(error.message);
+  }
+}
+
 document.querySelectorAll(".nav-link").forEach((link) => {
   link.addEventListener("click", () => {
     document.querySelectorAll(".nav-link").forEach((item) => item.classList.remove("active"));
@@ -303,4 +376,11 @@ document.querySelectorAll(".nav-link").forEach((link) => {
 });
 
 $("#date-filter").value = state.date;
-refreshDashboard().catch((error) => showToast(error.message, true));
+initializeApp();
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/service-worker.js")
+      .catch(() => showToast("Offline app support could not be enabled.", true));
+  });
+}
