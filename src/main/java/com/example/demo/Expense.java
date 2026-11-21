@@ -12,9 +12,11 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 
 @Entity
-@Table(name = "expenses")
+@Table(name = "expenses", uniqueConstraints = @UniqueConstraint(
+		name = "uk_expenses_account_client_request", columnNames = { "account_id", "client_request_id" }))
 public class Expense {
 
 	@Id
@@ -38,16 +40,34 @@ public class Expense {
 	@Column(nullable = false)
 	private LocalDate expenseDate;
 
+	@Column(name = "client_request_id", length = 36)
+	private String clientRequestId;
+
+	@Column(name = "balance_adjusted", nullable = false, columnDefinition = "boolean default true")
+	private boolean balanceAdjusted = true;
+
 	protected Expense() {
 	}
 
 	public Expense(BankAccount account, ExpenseCategory category, String description, BigDecimal amount,
 			LocalDate expenseDate) {
+		this(account, category, description, amount, expenseDate, null);
+	}
+
+	public Expense(BankAccount account, ExpenseCategory category, String description, BigDecimal amount,
+			LocalDate expenseDate, String clientRequestId) {
+		this(account, category, description, amount, expenseDate, clientRequestId, true);
+	}
+
+	public Expense(BankAccount account, ExpenseCategory category, String description, BigDecimal amount,
+			LocalDate expenseDate, String clientRequestId, boolean balanceAdjusted) {
 		this.account = account;
 		this.category = category;
 		this.description = description;
 		this.amount = amount;
 		this.expenseDate = expenseDate;
+		this.clientRequestId = clientRequestId;
+		this.balanceAdjusted = balanceAdjusted;
 	}
 
 	public Long getId() {
@@ -72,5 +92,9 @@ public class Expense {
 
 	public LocalDate getExpenseDate() {
 		return expenseDate;
+	}
+
+	public boolean isBalanceAdjusted() {
+		return balanceAdjusted;
 	}
 }

@@ -71,6 +71,15 @@ public class ExpenseService {
 
 	@Transactional
 	public ExpenseDto createExpense(AppUser owner, ExpenseRequest request) {
+		if (request.clientRequestId() != null) {
+			Expense existing = expenseRepository
+					.findByAccount_Owner_IdAndAccount_IdAndClientRequestId(
+							owner.getId(), request.accountId(), request.clientRequestId())
+					.orElse(null);
+			if (existing != null) {
+				return ExpenseDto.from(existing);
+			}
+		}
 		BankAccount account = requireAccount(owner.getId(), request.accountId());
 		ExpenseCategory category = categoryRepository.findById(request.categoryId())
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Category not found"));
@@ -83,8 +92,35 @@ public class ExpenseService {
 
 		account.setBalance(account.getBalance().subtract(request.amount()));
 		Expense expense = expenseRepository.save(new Expense(
-				account, category, description, request.amount(), request.expenseDate()));
+				account, category, description, request.amount(), request.expenseDate(), request.clientRequestId()));
 		return ExpenseDto.from(expense);
+	}
+
+	@Transactional
+	public StatementImportResult importExpenses(AppUser owner, StatementImportRequest request) {
+		BankAccount account = requireAccount(owner.getId(), request.accountId());
+		int imported = 0;
+		int alreadyImported = 0;
+		for (StatementImportRequest.Row row : request.rows()) {
+			Expense existing = expenseRepository
+					.findByAccount_Owner_IdAndAccount_IdAndClientRequestId(
+							owner.getId(), account.getId(), row.clientRequestId())
+					.orElse(null);
+			if (existing != null) {
+				alreadyImported++;
+				continue;
+			}
+			ExpenseCategory category = categoryRepository.findById(row.categoryId())
+					.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Category not found"));
+			if (category.getOwner() != null && !category.getOwner().getId().equals(owner.getId())) {
+				throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Category not found");
+			}
+			expenseRepository.save(new Expense(
+					account, category, row.description().trim(), row.amount(), row.expenseDate(),
+					row.clientRequestId(), false));
+			imported++;
+		}
+		return new StatementImportResult(imported, alreadyImported);
 	}
 
 	@Transactional
@@ -92,7 +128,9 @@ public class ExpenseService {
 		Expense expense = expenseRepository.findByIdAndAccount_Owner_Id(expenseId, owner.getId())
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Expense not found"));
 		BankAccount account = expense.getAccount();
-		account.setBalance(account.getBalance().add(expense.getAmount()));
+		if (expense.isBalanceAdjusted()) {
+			account.setBalance(account.getBalance().add(expense.getAmount()));
+		}
 		expenseRepository.delete(expense);
 	}
 
@@ -159,6 +197,15 @@ public class ExpenseService {
 		}).toList();
 
 		return new DashboardDto(totalSpent, summaries, getCategories(owner));
+	}
+
+	@Transactional(readOnly = true)
+	public OfflineSnapshotDto getOfflineSnapshot(AppUser owner) {
+		List<AccountDto> accounts = getAccounts(owner);
+		List<CategoryDto> categories = getCategories(owner);
+		List<ExpenseDto> expenses = expenseRepository.findByAccount_Owner_IdOrderByExpenseDateDescIdDesc(owner.getId())
+				.stream().map(ExpenseDto::from).toList();
+		return new OfflineSnapshotDto(accounts, categories, expenses);
 	}
 
 	private BankAccount requireAccount(Long ownerId, Long accountId) {

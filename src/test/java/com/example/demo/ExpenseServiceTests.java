@@ -4,11 +4,16 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
+import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.mock.web.MockMultipartFile;
+
+import java.nio.charset.StandardCharsets;
 
 @SpringBootTest(properties = {
 		"spring.datasource.url=jdbc:h2:mem:expense-service-test;DB_CLOSE_DELAY=-1",
@@ -18,6 +23,9 @@ class ExpenseServiceTests {
 
 	@Autowired
 	private ExpenseService expenseService;
+
+	@Autowired
+	private StatementImportService statementImportService;
 
 	@Autowired
 	private ExpenseRepository expenseRepository;
@@ -56,6 +64,93 @@ class ExpenseServiceTests {
 		expenseService.deleteExpense(owner, expense.id());
 
 		assertEquals(new BigDecimal("1000.00"), expenseService.getAccounts(owner).get(0).balance());
+	}
+
+	@Test
+	void retryingAnOfflineExpenseRequestDoesNotDeductTheBalanceTwice() {
+		AccountDto account = expenseService.createAccount(owner,
+				new AccountRequest("Example Bank", new BigDecimal("1000.00")));
+		CategoryDto category = expenseService.createCategory(owner, new CategoryRequest("Lunch"));
+		String requestId = UUID.randomUUID().toString();
+		ExpenseRequest request = new ExpenseRequest(
+				account.id(), category.id(), "Lunch", new BigDecimal("125.50"), LocalDate.now(), requestId);
+
+		ExpenseDto first = expenseService.createExpense(owner, request);
+		ExpenseDto retry = expenseService.createExpense(owner, request);
+
+		assertEquals(first.id(), retry.id());
+		assertEquals(new BigDecimal("874.50"), expenseService.getAccounts(owner).get(0).balance());
+		assertEquals(1, expenseRepository.count());
+	}
+
+	@Test
+	void importingExpensesPreservesTheCurrentBalanceAndIsRetrySafe() {
+		AccountDto account = expenseService.createAccount(owner,
+				new AccountRequest("Example Bank", new BigDecimal("1000.00")));
+		CategoryDto category = expenseService.createCategory(owner, new CategoryRequest("Coffee"));
+		String requestId = UUID.randomUUID().toString();
+		StatementImportRequest request = new StatementImportRequest(account.id(), List.of(
+				new StatementImportRequest.Row(
+						category.id(), "Coffee shop", new BigDecimal("25.00"), LocalDate.now(), requestId)));
+
+		StatementImportResult imported = expenseService.importExpenses(owner, request);
+		StatementImportResult retried = expenseService.importExpenses(owner, request);
+
+		assertEquals(1, imported.imported());
+		assertEquals(1, retried.alreadyImported());
+		assertEquals(new BigDecimal("1000.00"), expenseService.getAccounts(owner).get(0).balance());
+		Expense expense = expenseRepository.findByAccount_Owner_IdOrderByExpenseDateDescIdDesc(owner.getId())
+				.get(0);
+		assertEquals(false, expense.isBalanceAdjusted());
+
+		expenseService.deleteExpense(owner, expense.getId());
+
+		assertEquals(new BigDecimal("1000.00"), expenseService.getAccounts(owner).get(0).balance());
+	}
+
+	@Test
+	void statementPreviewDetectsBankCategoryAndExistingDuplicates() {
+		AccountDto account = expenseService.createAccount(owner,
+				new AccountRequest("HDFC Bank", new BigDecimal("1000.00")));
+		CategoryDto coffee = expenseService.createCategory(owner, new CategoryRequest("Coffee"));
+		expenseService.createCategory(owner, new CategoryRequest("Others"));
+		LocalDate date = LocalDate.of(2026, 11, 20);
+		expenseService.createExpense(owner, new ExpenseRequest(
+				account.id(), coffee.id(), "UPI COFFEE DAY", new BigDecimal("250.00"), date));
+		String csv = """
+				HDFC Bank
+				Transaction Date,Narration,Withdrawal Amt.,Deposit Amt.,Closing Balance
+				20/11/2026,UPI COFFEE DAY,250.00,,750.00
+				21/11/2026,Salary credit,,50000.00,50750.00
+				""";
+		MockMultipartFile file = new MockMultipartFile(
+				"file", "hdfc-statement.csv", "text/csv", csv.getBytes(StandardCharsets.UTF_8));
+
+		StatementImportPreviewDto preview = statementImportService.preview(owner, file);
+
+		assertEquals("HDFC Bank", preview.detectedBankName());
+		assertEquals(account.id(), preview.suggestedAccountId());
+		assertEquals(1, preview.skippedCredits());
+		assertEquals(coffee.id(), preview.rows().get(0).suggestedCategoryId());
+		assertEquals(true, preview.rows().get(0).duplicate());
+		assertEquals(false, preview.rows().get(0).include());
+	}
+
+	@Test
+	void offlineSnapshotContainsOnlyTheCurrentProfilesData() {
+		AccountDto account = expenseService.createAccount(owner,
+				new AccountRequest("Example Bank", new BigDecimal("1000.00")));
+		CategoryDto category = expenseService.createCategory(owner, new CategoryRequest("Lunch"));
+		expenseService.createExpense(owner, new ExpenseRequest(
+				account.id(), category.id(), "Lunch", new BigDecimal("125.50"), LocalDate.now()));
+		AppUser otherUser = userRepository.save(new AppUser("other-user", "test-password"));
+		expenseService.createAccount(otherUser, new AccountRequest("Other Bank", new BigDecimal("200.00")));
+
+		OfflineSnapshotDto snapshot = expenseService.getOfflineSnapshot(owner);
+
+		assertEquals(1, snapshot.accounts().size());
+		assertEquals(1, snapshot.expenses().size());
+		assertEquals("Example Bank", snapshot.expenses().get(0).bankName());
 	}
 
 	@Test

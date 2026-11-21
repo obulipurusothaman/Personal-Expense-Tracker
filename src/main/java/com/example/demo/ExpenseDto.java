@@ -11,7 +11,8 @@ public record ExpenseDto(
 		String categoryName,
 		String description,
 		BigDecimal amount,
-		LocalDate expenseDate) {
+		LocalDate expenseDate,
+		boolean balanceAdjusted) {
 
 	public static ExpenseDto from(Expense expense) {
 		return new ExpenseDto(
@@ -22,6 +23,7 @@ public record ExpenseDto(
 				expense.getCategory().getName(),
 				expense.getDescription(),
 				expense.getAmount(),
-				expense.getExpenseDate());
+				expense.getExpenseDate(),
+				expense.isBalanceAdjusted());
 	}
 }

@@ -8,8 +8,253 @@ const state = {
   accountId: ""
 };
 const $ = (selector) => document.querySelector(selector);
+const OFFLINE_DB_NAME = "pennywise-offline";
+let profileId = null;
+let offlineDbPromise;
+let syncRunning = false;
 let toastTimer;
 let installPrompt = null;
+let availableAccounts = [];
+let availableCategories = [];
+let importRows = [];
+
+function offlineDb() {
+  if (!offlineDbPromise) {
+    offlineDbPromise = new Promise((resolve, reject) => {
+      const request = indexedDB.open(OFFLINE_DB_NAME, 1);
+      request.onupgradeneeded = () => {
+        const database = request.result;
+        database.createObjectStore("settings", { keyPath: "key" });
+        database.createObjectStore("snapshots", { keyPath: "profileId" });
+        database.createObjectStore("mutations", { keyPath: "id" });
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error("Offline storage could not be opened."));
+    });
+
+    function openImportDialog() {
+      $("#import-form").reset();
+      $("#import-review").hidden = true;
+      $("#import-rows").replaceChildren();
+      $("#import-message").textContent = "";
+      $("#commit-import").hidden = true;
+      $("#review-import").textContent = "Review file";
+      importRows = [];
+      populateImportAccounts();
+      $("#import-dialog").showModal();
+    }
+
+    function populateImportAccounts(selectedId = "") {
+      const accountSelect = $("#import-account");
+      accountSelect.innerHTML = availableAccounts.length
+        ? `<option value="">Choose an account</option>${availableAccounts.map((account) =>
+          `<option value="${account.id}">${escapeHtml(account.bankName)}</option>`).join("")}`
+        : `<option value="">Add a bank account first</option>`;
+      accountSelect.value = selectedId ? String(selectedId) : "";
+      accountSelect.disabled = availableAccounts.length === 0;
+    }
+
+    function renderImportPreview(preview) {
+      populateImportAccounts(preview.suggestedAccountId || "");
+      $("#import-detection").textContent = `${preview.detectedBankName || "Bank not detected"} · ${preview.accountMatchMessage}`;
+      importRows = preview.rows.map((row) => ({
+        ...row,
+        clientRequestId: crypto.randomUUID(),
+        include: row.include
+      }));
+      const categoryOptions = availableCategories.map((category) =>
+        `<option value="${category.id}">${escapeHtml(category.name)}</option>`).join("");
+      $("#import-rows").innerHTML = importRows.map((row, index) => `
+        <tr data-row-index="${index}" class="${row.duplicate ? "import-duplicate" : ""}">
+          <td><input class="import-include" type="checkbox" aria-label="Include ${escapeHtml(row.description)}" ${row.include ? "checked" : ""}></td>
+          <td><span class="import-description">${escapeHtml(row.description)}</span>
+            ${row.duplicate ? `<span class="import-warning">Possible duplicate</span>` : ""}
+            ${row.assumedDebit ? `<span class="import-warning">Check debit/credit</span>` : ""}
+          </td>
+          <td>${escapeHtml(row.expenseDate)}</td>
+          <td><select class="import-category" aria-label="Category for ${escapeHtml(row.description)}" data-category-review="${row.needsReview}">
+            ${categoryOptions}
+          </select></td>
+          <td class="amount-cell">${money(row.amount)}</td>
+        </tr>`).join("");
+      importRows.forEach((row, index) => {
+        const select = $(`#import-rows tr[data-row-index="${index}"] .import-category`);
+        select.value = String(row.suggestedCategoryId);
+      });
+      $("#import-review").hidden = false;
+      $("#commit-import").hidden = false;
+      $("#review-import").textContent = "Review again";
+      $("#import-message").textContent = "";
+      const duplicates = importRows.filter((row) => row.duplicate).length;
+      const assumedDebits = importRows.filter((row) => row.assumedDebit).length;
+      const skipped = [
+        preview.skippedCredits ? `${preview.skippedCredits} credit${preview.skippedCredits === 1 ? "" : "s"} skipped` : "",
+        preview.skippedRows ? `${preview.skippedRows} unreadable row${preview.skippedRows === 1 ? "" : "s"}` : "",
+        duplicates ? `${duplicates} possible duplicate${duplicates === 1 ? "" : "s"} unchecked` : "",
+        assumedDebits ? `${assumedDebits} row${assumedDebits === 1 ? "" : "s"} need debit/credit review` : ""
+      ].filter(Boolean);
+      $("#import-summary").textContent = `${importRows.length} expense row${importRows.length === 1 ? "" : "s"} found${skipped.length ? ` · ${skipped.join(" · ")}` : ""}.`;
+      updateImportButton();
+    }
+
+    function updateImportButton() {
+      const accountId = $("#import-account").value;
+      const selectedCount = importRows.filter((row) => row.include).length;
+      $("#commit-import").disabled = !accountId || selectedCount === 0 || !navigator.onLine;
+      $("#commit-import").textContent = `Import ${selectedCount} selected`;
+    }
+
+    $("#import-file").addEventListener("change", () => {
+      importRows = [];
+      $("#import-review").hidden = true;
+      $("#commit-import").hidden = true;
+      $("#review-import").textContent = "Review file";
+      $("#import-message").textContent = "";
+    });
+
+    $("#import-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const file = $("#import-file").files[0];
+      if (!file) return;
+      if (!navigator.onLine) {
+        $("#import-message").textContent = "Connect to the internet to review and import a statement.";
+        return;
+      }
+      const formData = new FormData();
+      formData.set("file", file);
+      const reviewButton = $("#review-import");
+      reviewButton.disabled = true;
+      $("#import-message").textContent = "";
+      try {
+        const preview = await api("/api/imports/preview", { method: "POST", body: formData });
+        renderImportPreview(preview);
+      } catch (error) {
+        $("#import-message").textContent = error.message;
+      } finally {
+        reviewButton.disabled = false;
+      }
+    });
+
+    $("#import-rows").addEventListener("change", (event) => {
+      const row = event.target.closest("tr[data-row-index]");
+      if (!row) return;
+      const index = Number(row.dataset.rowIndex);
+      if (event.target.matches(".import-include")) {
+        importRows[index].include = event.target.checked;
+      } else if (event.target.matches(".import-category")) {
+        importRows[index].suggestedCategoryId = Number(event.target.value);
+      }
+      updateImportButton();
+    });
+
+    $("#import-account").addEventListener("change", updateImportButton);
+    $("#commit-import").addEventListener("click", async () => {
+      const accountId = Number($("#import-account").value);
+      const rows = importRows.filter((row) => row.include).map((row) => ({
+        categoryId: Number(row.suggestedCategoryId),
+        description: row.description,
+        amount: Number(row.amount),
+        expenseDate: row.expenseDate,
+        clientRequestId: row.clientRequestId
+      }));
+      if (!accountId || !rows.length || !navigator.onLine) {
+        updateImportButton();
+        return;
+      }
+      const button = $("#commit-import");
+      button.disabled = true;
+      try {
+        const result = await api("/api/imports", {
+          method: "POST",
+          body: JSON.stringify({ accountId, rows })
+        });
+        $("#import-dialog").close();
+        await refreshDashboard();
+        showToast(`Imported ${result.imported} expense${result.imported === 1 ? "" : "s"}; account balance unchanged.`);
+      } catch (error) {
+        $("#import-message").textContent = error.message;
+      } finally {
+        updateImportButton();
+      }
+    });
+  }
+  return offlineDbPromise;
+}
+
+function storeRequest(storeName, mode, action) {
+  return offlineDb().then((database) => new Promise((resolve, reject) => {
+    const transaction = database.transaction(storeName, mode);
+    const request = action(transaction.objectStore(storeName));
+    let result;
+    request.onsuccess = () => { result = request.result; };
+    request.onerror = () => reject(request.error || new Error("Offline storage request failed."));
+    transaction.oncomplete = () => resolve(result);
+    transaction.onerror = () => reject(transaction.error || new Error("Offline storage transaction failed."));
+    transaction.onabort = () => reject(transaction.error || new Error("Offline storage transaction was aborted."));
+  }));
+}
+
+function getSetting(key) {
+  return storeRequest("settings", "readonly", (store) => store.get(key))
+    .then((record) => record?.value ?? null);
+}
+
+function saveSetting(key, value) {
+  return storeRequest("settings", "readwrite", (store) => store.put({ key, value }));
+}
+
+function loadOfflineSnapshot() {
+  return profileId
+    ? storeRequest("snapshots", "readonly", (store) => store.get(profileId)).then((record) => record?.data ?? null)
+    : Promise.resolve(null);
+}
+
+function saveOfflineSnapshot(snapshot) {
+  if (!profileId) return Promise.resolve();
+  return storeRequest("snapshots", "readwrite", (store) => store.put({
+    profileId,
+    savedAt: new Date().toISOString(),
+    data: snapshot
+  }));
+}
+
+async function getPendingMutations() {
+  if (!profileId) return [];
+  const records = await storeRequest("mutations", "readonly", (store) => store.getAll());
+  return records.filter((record) => record.profileId === profileId)
+    .sort((first, second) => first.createdAt.localeCompare(second.createdAt));
+}
+
+function savePendingMutation(mutation) {
+  return storeRequest("mutations", "readwrite", (store) => store.put(mutation));
+}
+
+function removePendingMutation(id) {
+  return storeRequest("mutations", "readwrite", (store) => store.delete(id));
+}
+
+function isNetworkError(error) {
+  return !navigator.onLine || error instanceof TypeError;
+}
+
+function updateConnectionStatus(pendingCount) {
+  const status = $("#connection-status");
+  const syncButton = $("#sync-now");
+  const message = $("#connection-message");
+  status.hidden = false;
+  syncButton.disabled = !navigator.onLine || pendingCount === 0;
+  if (!navigator.onLine) {
+    message.textContent = pendingCount
+      ? `Offline · ${pendingCount} change${pendingCount === 1 ? "" : "s"} waiting to sync.`
+      : "Offline · changes stay on this device until you reconnect.";
+    return;
+  }
+  if (pendingCount) {
+    message.textContent = `${pendingCount} change${pendingCount === 1 ? "" : "s"} waiting to sync.`;
+    return;
+  }
+  message.textContent = "Online · all changes synced.";
+}
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({
@@ -46,7 +291,9 @@ async function csrfToken() {
 async function api(url, options = {}) {
   const method = (options.method || "GET").toUpperCase();
   const headers = new Headers(options.headers || {});
-  if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
   if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
     headers.set("X-XSRF-TOKEN", await csrfToken());
   }
@@ -97,15 +344,127 @@ function queryString() {
 }
 
 async function refreshDashboard() {
-  const [dashboard, expenses] = await Promise.all([
-    api(`/api/dashboard?${queryString()}`),
-    api(`/api/expenses?${queryString()}${state.accountId ? `&accountId=${state.accountId}` : ""}${state.categoryId ? `&categoryId=${state.categoryId}` : ""}`)
-  ]);
+  let snapshot;
+  if (navigator.onLine) {
+    try {
+      snapshot = await api("/api/offline/snapshot");
+      await saveOfflineSnapshot(snapshot);
+    } catch (error) {
+      if (!isNetworkError(error)) throw error;
+      snapshot = await loadOfflineSnapshot();
+      if (!snapshot) throw new Error("Connect to the internet once to save this wallet for offline use.");
+    }
+  } else {
+    snapshot = await loadOfflineSnapshot();
+    if (!snapshot) throw new Error("Connect to the internet once to save this wallet for offline use.");
+  }
+  const mutations = await getPendingMutations();
+  const { dashboard, expenses } = buildOfflineView(snapshot, mutations);
   renderDashboard(dashboard);
   renderExpenses(expenses);
+  updateConnectionStatus(mutations.length);
+}
+
+function toLocalDateString(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function selectedDateRange() {
+  const selected = new Date(`${state.date}T00:00:00`);
+  let start = new Date(selected);
+  let end = new Date(selected);
+  if (state.period === "week") {
+    const daysSinceMonday = (selected.getDay() + 6) % 7;
+    start.setDate(selected.getDate() - daysSinceMonday);
+    end = new Date(start);
+    end.setDate(start.getDate() + 6);
+  } else if (state.period === "month") {
+    start = new Date(selected.getFullYear(), selected.getMonth(), 1);
+    end = new Date(selected.getFullYear(), selected.getMonth() + 1, 0);
+  } else if (state.period === "year") {
+    start = new Date(selected.getFullYear(), 0, 1);
+    end = new Date(selected.getFullYear(), 11, 31);
+  }
+  return [toLocalDateString(start), toLocalDateString(end)];
+}
+
+function buildOfflineView(snapshot, mutations) {
+  const accountsById = new Map(snapshot.accounts.map((account) => [String(account.id), account]));
+  const categoriesById = new Map(snapshot.categories.map((category) => [String(category.id), category]));
+  const deletedIds = new Set(mutations
+    .filter((mutation) => mutation.type === "delete-expense")
+    .map((mutation) => String(mutation.expenseId)));
+  const pendingCreates = mutations.filter((mutation) => mutation.type === "create-expense");
+  const expenses = snapshot.expenses.filter((expense) => !deletedIds.has(String(expense.id)));
+  for (const mutation of pendingCreates) {
+    const body = mutation.body;
+    const account = accountsById.get(String(body.accountId));
+    const category = categoriesById.get(String(body.categoryId));
+    if (!account || !category) continue;
+    expenses.push({
+      id: `local:${mutation.id}`,
+      accountId: account.id,
+      bankName: account.bankName,
+      categoryId: category.id,
+      categoryName: category.name,
+      description: body.description?.trim() || category.name,
+      amount: body.amount,
+      expenseDate: body.expenseDate,
+      balanceAdjusted: true,
+      pendingAt: mutation.createdAt
+    });
+  }
+
+  const [startDate, endDate] = selectedDateRange();
+  const inPeriod = expenses.filter((expense) => expense.expenseDate >= startDate && expense.expenseDate <= endDate);
+  const totalSpent = inPeriod.reduce((total, expense) => total + Number(expense.amount), 0);
+  const dashboardAccounts = snapshot.accounts.map((account) => {
+    const accountExpenses = inPeriod.filter((expense) => String(expense.accountId) === String(account.id));
+    const categoryTotals = new Map();
+    for (const expense of accountExpenses) {
+      const key = String(expense.categoryId);
+      const current = categoryTotals.get(key) || { categoryId: expense.categoryId, categoryName: expense.categoryName, amount: 0 };
+      current.amount += Number(expense.amount);
+      categoryTotals.set(key, current);
+    }
+    const createdForAccount = pendingCreates
+      .filter((mutation) => String(mutation.body.accountId) === String(account.id))
+      .reduce((total, mutation) => total + Number(mutation.body.amount), 0);
+    const deletedForAccount = snapshot.expenses
+      .filter((expense) => deletedIds.has(String(expense.id))
+        && String(expense.accountId) === String(account.id)
+        && expense.balanceAdjusted !== false)
+      .reduce((total, expense) => total + Number(expense.amount), 0);
+    return {
+      id: account.id,
+      bankName: account.bankName,
+      balance: Number(account.balance) - createdForAccount + deletedForAccount,
+      spent: accountExpenses.reduce((total, expense) => total + Number(expense.amount), 0),
+      categoryBreakdown: [...categoryTotals.values()].sort((first, second) => second.amount - first.amount),
+      recentExpenses: accountExpenses.slice().sort(compareExpenses).slice(0, 5)
+    };
+  });
+  const filteredExpenses = inPeriod
+    .filter((expense) => !state.accountId || String(expense.accountId) === state.accountId)
+    .filter((expense) => !state.categoryId || String(expense.categoryId) === state.categoryId)
+    .sort(compareExpenses);
+  return {
+    dashboard: { totalSpent, accounts: dashboardAccounts, categories: snapshot.categories },
+    expenses: filteredExpenses
+  };
+}
+
+function compareExpenses(first, second) {
+  if (first.expenseDate !== second.expenseDate) return second.expenseDate.localeCompare(first.expenseDate);
+  if (first.pendingAt || second.pendingAt) {
+    return (second.pendingAt || "").localeCompare(first.pendingAt || "");
+  }
+  return Number(second.id) - Number(first.id);
 }
 
 function renderDashboard(dashboard) {
+  availableAccounts = dashboard.accounts;
+  availableCategories = dashboard.categories;
   $("#total-spent").textContent = money(dashboard.totalSpent);
   $("#account-count").textContent = dashboard.accounts.length;
   $("#account-caption").textContent = dashboard.accounts.length
@@ -234,7 +593,7 @@ function renderExpenses(expenses) {
       <td>${escapeHtml(expense.bankName)}</td>
       <td>${shortDate(expense.expenseDate)}</td>
       <td class="amount-cell">${money(expense.amount)}</td>
-      <td><button class="delete-expense" data-expense-id="${expense.id}" title="Delete expense" aria-label="Delete ${escapeHtml(expense.description)}">×</button></td>
+      <td><button class="delete-expense" data-expense-id="${expense.id}" data-balance-adjusted="${expense.balanceAdjusted !== false}" title="Delete expense" aria-label="Delete ${escapeHtml(expense.description)}">×</button></td>
     </tr>`;
   }).join("");
 }
@@ -254,14 +613,75 @@ async function submitForm(form, url, successMessage, onSuccess) {
   if (body.amount !== undefined) body.amount = Number(body.amount);
   if (body.accountId !== undefined) body.accountId = Number(body.accountId);
   if (body.categoryId !== undefined) body.categoryId = Number(body.categoryId);
+  const isExpense = url === "/api/expenses";
+  if (isExpense) body.clientRequestId = crypto.randomUUID();
   try {
     await api(url, { method: "POST", body: JSON.stringify(body) });
-    form.closest("dialog").close();
-    form.reset();
-    await onSuccess();
-    showToast(successMessage);
   } catch (error) {
-    showToast(error.message, true);
+    if (!isNetworkError(error)) {
+      showToast(error.message, true);
+      return;
+    }
+    if (!isExpense) {
+      showToast("Bank account and category changes need an internet connection.", true);
+      return;
+    }
+    try {
+      const snapshot = await loadOfflineSnapshot();
+      const accountExists = snapshot?.accounts.some((account) => String(account.id) === String(body.accountId));
+      const categoryExists = snapshot?.categories.some((category) => String(category.id) === String(body.categoryId));
+      if (!accountExists || !categoryExists) {
+        throw new Error("Connect to the internet once before adding an offline expense.");
+      }
+      await savePendingMutation({
+        id: body.clientRequestId,
+        profileId,
+        type: "create-expense",
+        body,
+        createdAt: new Date().toISOString()
+      });
+      form.closest("dialog").close();
+      form.reset();
+      await onSuccess();
+      showToast("Saved on this device. It will sync when you're back online.");
+    } catch (storageError) {
+      showToast(storageError.message, true);
+    }
+    return;
+  }
+  form.closest("dialog").close();
+  form.reset();
+  await onSuccess();
+  showToast(successMessage);
+}
+
+async function syncPendingMutations() {
+  if (syncRunning || !navigator.onLine || !profileId) return;
+  syncRunning = true;
+  try {
+    const mutations = await getPendingMutations();
+    for (const mutation of mutations) {
+      try {
+        if (mutation.type === "create-expense") {
+          await api("/api/expenses", { method: "POST", body: JSON.stringify(mutation.body) });
+        } else if (mutation.type === "delete-expense") {
+          await api(`/api/expenses/${mutation.expenseId}`, { method: "DELETE" });
+        }
+      } catch (error) {
+        if (!(mutation.type === "delete-expense" && error.status === 404)) throw error;
+      }
+      await removePendingMutation(mutation.id);
+    }
+    if (mutations.length) {
+      const snapshot = await api("/api/offline/snapshot");
+      await saveOfflineSnapshot(snapshot);
+    }
+    await refreshDashboard();
+  } catch (error) {
+    showToast(`Sync paused: ${error.message}`, true);
+  } finally {
+    syncRunning = false;
+    updateConnectionStatus((await getPendingMutations()).length);
   }
 }
 
@@ -287,6 +707,7 @@ $("#open-expense").addEventListener("click", () => openDialog("expense-dialog"))
 $("#empty-add-expense").addEventListener("click", () => openDialog("expense-dialog"));
 $("#open-account").addEventListener("click", () => openDialog("account-dialog"));
 $("#open-category").addEventListener("click", () => openDialog("category-dialog"));
+$("#open-import").addEventListener("click", () => openImportDialog());
 document.querySelectorAll("[data-close]").forEach((button) => {
   button.addEventListener("click", () => $(`#${button.dataset.close}`).close());
 });
@@ -367,9 +788,42 @@ window.addEventListener("appinstalled", () => {
 $("#expense-rows").addEventListener("click", async (event) => {
   const button = event.target.closest("[data-expense-id]");
   if (!button) return;
-  if (!window.confirm("Delete this expense? The account balance will be restored.")) return;
+  const confirmation = button.dataset.balanceAdjusted === "false"
+    ? "Delete this imported expense? The account balance will remain unchanged."
+    : "Delete this expense? The account balance will be restored.";
+  if (!window.confirm(confirmation)) return;
+  const expenseId = button.dataset.expenseId;
+  if (expenseId.startsWith("local:")) {
+    await removePendingMutation(expenseId.slice("local:".length));
+    await refreshDashboard();
+    showToast("Offline expense removed.");
+    return;
+  }
   try {
-    await api(`/api/expenses/${button.dataset.expenseId}`, { method: "DELETE" });
+    if (!navigator.onLine) throw new TypeError("Offline");
+    await api(`/api/expenses/${expenseId}`, { method: "DELETE" });
+  } catch (error) {
+    if (!isNetworkError(error)) {
+      showToast(error.message, true);
+      return;
+    }
+    try {
+      await savePendingMutation({
+        id: crypto.randomUUID(),
+        profileId,
+        type: "delete-expense",
+        expenseId,
+        createdAt: new Date().toISOString()
+      });
+    } catch (storageError) {
+      showToast(storageError.message, true);
+      return;
+    }
+    await refreshDashboard();
+    showToast("Deletion saved on this device and will sync when you're back online.");
+    return;
+  }
+  try {
     await refreshDashboard();
     showToast("Expense deleted and balance restored.");
   } catch (error) {
@@ -396,14 +850,27 @@ $("#accounts-grid").addEventListener("click", async (event) => {
 
 async function initializeApp() {
   try {
-    await csrfToken();
-    await api("/api/auth/me");
+    profileId = await getSetting("profileId");
+    try {
+      const currentUser = await api("/api/auth/me");
+      profileId = String(currentUser.id);
+      await saveSetting("profileId", profileId);
+    } catch (error) {
+      if (!isNetworkError(error) || !profileId || !(await loadOfflineSnapshot())) throw error;
+    }
     showApp();
     await refreshDashboard();
+    await syncPendingMutations();
   } catch (error) {
     showStartupError(error.message);
   }
 }
+
+$("#sync-now").addEventListener("click", syncPendingMutations);
+window.addEventListener("online", syncPendingMutations);
+window.addEventListener("offline", () => {
+  refreshDashboard().catch((error) => showToast(error.message, true));
+});
 
 document.querySelectorAll(".nav-link").forEach((link) => {
   link.addEventListener("click", () => {

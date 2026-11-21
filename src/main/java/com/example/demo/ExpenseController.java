@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import jakarta.validation.Valid;
 
@@ -32,9 +33,11 @@ public class ExpenseController {
 			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 
 	private final ExpenseService expenseService;
+	private final StatementImportService statementImportService;
 
-	public ExpenseController(ExpenseService expenseService) {
+	public ExpenseController(ExpenseService expenseService, StatementImportService statementImportService) {
 		this.expenseService = expenseService;
+		this.statementImportService = statementImportService;
 	}
 
 	@GetMapping("/dashboard")
@@ -43,6 +46,11 @@ public class ExpenseController {
 			@RequestParam(defaultValue = "month") String period,
 			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
 		return expenseService.getDashboard(owner, period, date);
+	}
+
+	@GetMapping("/offline/snapshot")
+	public OfflineSnapshotDto offlineSnapshot(@AuthenticationPrincipal AppUser owner) {
+		return expenseService.getOfflineSnapshot(owner);
 	}
 
 	@GetMapping("/accounts")
@@ -95,6 +103,18 @@ public class ExpenseController {
 			@AuthenticationPrincipal AppUser owner, @PathVariable Long expenseId) {
 		expenseService.deleteExpense(owner, expenseId);
 		return ResponseEntity.noContent().build();
+	}
+
+	@PostMapping(value = "/imports/preview", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+	public StatementImportPreviewDto previewStatementImport(
+			@AuthenticationPrincipal AppUser owner, @RequestParam("file") MultipartFile file) {
+		return statementImportService.preview(owner, file);
+	}
+
+	@PostMapping("/imports")
+	public StatementImportResult importStatementExpenses(
+			@AuthenticationPrincipal AppUser owner, @Valid @RequestBody StatementImportRequest request) {
+		return expenseService.importExpenses(owner, request);
 	}
 
 	@GetMapping("/accounts/{accountId}/export")

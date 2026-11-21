@@ -13,6 +13,11 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
 
 	Optional<Expense> findByIdAndAccount_Owner_Id(Long id, Long ownerId);
 
+	Optional<Expense> findByAccount_Owner_IdAndAccount_IdAndClientRequestId(
+			Long ownerId, Long accountId, String clientRequestId);
+
+	List<Expense> findByAccount_Owner_IdOrderByExpenseDateDescIdDesc(Long ownerId);
+
 	List<Expense> findByAccount_Owner_IdAndExpenseDateBetweenOrderByExpenseDateDescIdDesc(
 			Long ownerId, LocalDate startDate, LocalDate endDate);
 

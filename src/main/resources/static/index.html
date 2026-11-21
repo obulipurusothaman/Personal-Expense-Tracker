@@ -9,8 +9,8 @@
   <title>Pennywise — Personal finance</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/icons/pennywise-192.png">
-  <link rel="stylesheet" href="/styles.css?v=4">
-  <script src="/app.js?v=4" defer></script>
+  <link rel="stylesheet" href="/styles.css?v=7">
+  <script src="/app.js?v=7" defer></script>
 </head>
 <body>
   <main id="startup-screen" class="startup-screen" aria-live="polite">
@@ -58,8 +58,12 @@
           <p class="page-subtitle">A little clarity goes a long way.</p>
         </div>
         <div class="topbar-actions">
+          <div class="sync-status" id="connection-status" role="status" aria-live="polite" hidden>
+            <span id="connection-message"></span><button type="button" id="sync-now">Sync now</button>
+          </div>
           <button class="button button-quiet" id="open-device-link" type="button">Link device</button>
           <button class="button button-quiet" id="install-app" type="button">Install app</button>
+          <button class="button button-quiet" id="open-import" type="button">↑ Import statement</button>
           <label class="period-control">
             <span class="sr-only">Choose reporting period</span>
             <select id="period-filter">
@@ -172,6 +176,38 @@
       <div class="modal-header"><div><div class="eyebrow">MAKE IT YOURS</div><h2>Create a category</h2></div><button type="button" class="close-button" data-close="category-dialog" aria-label="Close">×</button></div>
       <label class="field-label">Category name<input name="name" maxlength="40" required placeholder="e.g. Learning"></label>
       <div class="modal-actions"><button type="button" class="button button-quiet" data-close="category-dialog">Cancel</button><button class="button button-primary" type="submit">Save category</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="import-dialog" class="modal import-modal">
+    <form id="import-form" class="modal-form">
+      <div class="modal-header">
+        <div><div class="eyebrow">BRING YOUR RECORDS</div><h2>Import expenses</h2></div>
+        <button type="button" class="close-button" data-close="import-dialog" aria-label="Close">×</button>
+      </div>
+      <p class="field-help">Choose a CSV, Excel (.xlsx), or delimited text (.txt) statement. The file is processed by this app and is not saved. Credits are skipped; current account balances stay unchanged.</p>
+      <label class="field-label">Statement file
+        <input id="import-file" name="file" type="file" accept=".csv,.xlsx,.txt" required>
+      </label>
+      <div id="import-review" class="import-review" hidden>
+        <div id="import-detection" class="import-detection" role="status"></div>
+        <label class="field-label">Bank account
+          <select id="import-account" name="accountId" required></select>
+        </label>
+        <p id="import-summary" class="field-help"></p>
+        <div class="import-table-wrap">
+          <table class="import-table">
+            <thead><tr><th>IMPORT</th><th>DESCRIPTION</th><th>DATE</th><th>CATEGORY</th><th class="amount-heading">AMOUNT</th></tr></thead>
+            <tbody id="import-rows"></tbody>
+          </table>
+        </div>
+      </div>
+      <p id="import-message" class="import-message" role="alert"></p>
+      <div class="modal-actions">
+        <button type="button" class="button button-quiet" data-close="import-dialog">Cancel</button>
+        <button class="button button-quiet" id="review-import" type="submit">Review file</button>
+        <button class="button button-primary" id="commit-import" type="button" hidden>Import selected</button>
+      </div>
     </form>
   </dialog>
 

@@ -1,0 +1,510 @@
+package com.example.demo;
+
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
+import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.regex.Pattern;
+
+import org.apache.poi.ss.usermodel.DataFormatter;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Component;
+import org.springframework.web.server.ResponseStatusException;
+
+@Component
+public class StatementFileParser {
+
+	private static final int MAX_ROWS = 2000;
+	private static final List<BankAlias> BANKS = List.of(
+			new BankAlias("State Bank of India", List.of("state bank of india", "sbi")),
+			new BankAlias("Bank of Baroda", List.of("bank of baroda", "bob")),
+			new BankAlias("Kotak Mahindra Bank", List.of("kotak mahindra", "kotak")),
+			new BankAlias("IDFC FIRST Bank", List.of("idfc first", "idfc")),
+			new BankAlias("Punjab National Bank", List.of("punjab national bank", "pnb")),
+			new BankAlias("Canara Bank", List.of("canara bank", "canara")),
+			new BankAlias("Union Bank of India", List.of("union bank of india", "union bank")),
+			new BankAlias("IndusInd Bank", List.of("indusind bank", "indusind")),
+			new BankAlias("Federal Bank", List.of("federal bank", "federal")),
+			new BankAlias("HDFC Bank", List.of("hdfc bank", "hdfc")),
+			new BankAlias("ICICI Bank", List.of("icici bank", "icici")),
+			new BankAlias("Axis Bank", List.of("axis bank", "axis")),
+			new BankAlias("Yes Bank", List.of("yes bank")),
+			new BankAlias("Bank of India", List.of("bank of india")),
+			new BankAlias("Bank of Maharashtra", List.of("bank of maharashtra")));
+	private static final List<DateTimeFormatter> DATE_FORMATS = List.of(
+			new DateTimeFormatterBuilder().parseCaseInsensitive().appendPattern("d/M/uuuu").toFormatter(Locale.ROOT),
+			new DateTimeFormatterBuilder().parseCaseInsensitive().appendPattern("d-M-uuuu").toFormatter(Locale.ROOT),
+			new DateTimeFormatterBuilder().parseCaseInsensitive().appendPattern("uuuu-M-d").toFormatter(Locale.ROOT),
+			new DateTimeFormatterBuilder().parseCaseInsensitive().appendPattern("d MMM uuuu").toFormatter(Locale.ROOT),
+			new DateTimeFormatterBuilder().parseCaseInsensitive().appendPattern("d-MMM-uu").toFormatter(Locale.ROOT),
+			new DateTimeFormatterBuilder().parseCaseInsensitive().appendPattern("M/d/uuuu").toFormatter(Locale.ROOT),
+			new DateTimeFormatterBuilder().parseCaseInsensitive().appendPattern("M/d/uu").toFormatter(Locale.ROOT),
+			new DateTimeFormatterBuilder().parseCaseInsensitive().appendPattern("d/M/uu").toFormatter(Locale.ROOT));
+
+	public ParsedStatement parse(String fileName, byte[] content) {
+		if (content == null || content.length == 0) {
+			throw badRequest("Choose a non-empty statement file.");
+		}
+		String extension = fileExtension(fileName);
+		List<List<String>> table;
+		if ("xlsx".equals(extension)) {
+			table = readWorkbook(content);
+		} else if ("csv".equals(extension) || "txt".equals(extension)) {
+			table = readDelimitedText(content, extension);
+		} else {
+			throw badRequest("Use a CSV, Excel (.xlsx), or delimited text (.txt) file.");
+		}
+		if (table.size() > MAX_ROWS + 30) {
+			throw badRequest("The statement is too large. Import up to 2,000 transactions at a time.");
+		}
+
+		Header header = findHeader(table);
+		int dataStart = header == null ? 0 : header.rowIndex() + 1;
+		String bankName = detectBank(fileName, table);
+		List<Transaction> transactions = new ArrayList<>();
+		int skippedCredits = 0;
+		int skippedRows = 0;
+
+		for (int index = dataStart; index < table.size(); index++) {
+			List<String> row = table.get(index);
+			ParsedRow parsed = header == null ? parseUnheadedRow(row) : parseRow(row, header);
+			if (parsed == null) {
+				if (header != null || row.stream().anyMatch(cell -> parseDate(cell) != null)) {
+					skippedRows++;
+				}
+				continue;
+			}
+			if (parsed.credit()) {
+				skippedCredits++;
+				continue;
+			}
+			if (parsed.transaction() == null) {
+				skippedRows++;
+				continue;
+			}
+			Transaction transaction = parsed.transaction();
+			transactions.add(new Transaction(
+					index + 1,
+					transaction.expenseDate(),
+					transaction.description().substring(0, Math.min(120, transaction.description().length())),
+					transaction.amount(),
+					transaction.assumedDebit()));
+			if (transactions.size() > MAX_ROWS) {
+				throw badRequest("The statement has more than 2,000 expense rows. Import a smaller date range.");
+			}
+		}
+		if (transactions.isEmpty()) {
+			throw badRequest("No expense rows could be read. Use a statement with date, description, and debit amount columns.");
+		}
+		return new ParsedStatement(bankName, skippedCredits, skippedRows, transactions);
+	}
+
+	private List<List<String>> readWorkbook(byte[] content) {
+		try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(content))) {
+			if (workbook.getNumberOfSheets() == 0) {
+				throw badRequest("The Excel file does not contain a worksheet.");
+			}
+			DataFormatter formatter = new DataFormatter(Locale.ROOT);
+			List<List<String>> rows = new ArrayList<>();
+			for (Row row : workbook.getSheetAt(0)) {
+				List<String> values = new ArrayList<>();
+				for (int column = 0; column < row.getLastCellNum(); column++) {
+					values.add(formatter.formatCellValue(row.getCell(column)).trim());
+				}
+				if (values.stream().anyMatch(value -> !value.isBlank())) {
+					rows.add(values);
+				}
+			}
+			return rows;
+		} catch (IOException exception) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "The Excel file could not be read.", exception);
+		}
+	}
+
+	private List<List<String>> readDelimitedText(byte[] content, String extension) {
+		String text = new String(content, java.nio.charset.StandardCharsets.UTF_8);
+		if (!text.isEmpty() && text.charAt(0) == '\uFEFF') {
+			text = text.substring(1);
+		}
+		if (text.isBlank()) {
+			throw badRequest("The statement file is empty.");
+		}
+		char delimiter = detectDelimiter(text);
+		if (delimiter == '\0') {
+			if (!"txt".equals(extension)) {
+				throw badRequest("The CSV file must contain comma-, semicolon-, tab-, or pipe-separated columns.");
+			}
+			return text.lines().map(String::trim).filter(line -> !line.isBlank())
+					.map(line -> List.of(line.split("\\s{2,}", -1))).toList();
+		}
+		return parseDelimited(text, delimiter);
+	}
+
+	private char detectDelimiter(String text) {
+		char selected = '\0';
+		int greatestCount = 0;
+		int linesChecked = 0;
+		for (String line : text.lines().toList()) {
+			if (line.isBlank()) {
+				continue;
+			}
+			for (char candidate : new char[] { ',', '\t', ';', '|' }) {
+				int count = countUnquoted(line, candidate);
+				if (count > greatestCount) {
+					greatestCount = count;
+					selected = candidate;
+				}
+			}
+			if (++linesChecked == 30) {
+				break;
+			}
+		}
+		return selected;
+	}
+
+	private int countUnquoted(String line, char delimiter) {
+		int count = 0;
+		boolean quoted = false;
+		for (int index = 0; index < line.length(); index++) {
+			char character = line.charAt(index);
+			if (character == '"') {
+				if (quoted && index + 1 < line.length() && line.charAt(index + 1) == '"') {
+					index++;
+				} else {
+					quoted = !quoted;
+				}
+			} else if (character == delimiter && !quoted) {
+				count++;
+			}
+		}
+		return count;
+	}
+
+	private List<List<String>> parseDelimited(String text, char delimiter) {
+		List<List<String>> rows = new ArrayList<>();
+		List<String> row = new ArrayList<>();
+		StringBuilder cell = new StringBuilder();
+		boolean quoted = false;
+		for (int index = 0; index < text.length(); index++) {
+			char character = text.charAt(index);
+			if (character == '"') {
+				if (quoted && index + 1 < text.length() && text.charAt(index + 1) == '"') {
+					cell.append('"');
+					index++;
+				} else {
+					quoted = !quoted;
+				}
+			} else if (character == delimiter && !quoted) {
+				row.add(cell.toString().trim());
+				cell.setLength(0);
+			} else if ((character == '\n' || character == '\r') && !quoted) {
+				if (character == '\r' && index + 1 < text.length() && text.charAt(index + 1) == '\n') {
+					index++;
+				}
+				row.add(cell.toString().trim());
+				cell.setLength(0);
+				if (row.stream().anyMatch(value -> !value.isBlank())) {
+					rows.add(row);
+				}
+				row = new ArrayList<>();
+			} else {
+				cell.append(character);
+			}
+		}
+		if (quoted) {
+			throw badRequest("The statement contains an unclosed quoted field.");
+		}
+		row.add(cell.toString().trim());
+		if (row.stream().anyMatch(value -> !value.isBlank())) {
+			rows.add(row);
+		}
+		return rows;
+	}
+
+	private Header findHeader(List<List<String>> rows) {
+		for (int index = 0; index < Math.min(rows.size(), 30); index++) {
+			List<String> cells = rows.get(index);
+			Header header = new Header(
+					index,
+					findDateColumn(cells),
+					findDescriptionColumn(cells),
+					findDebitColumn(cells),
+					findCreditColumn(cells),
+					findAmountColumn(cells),
+					findTypeColumn(cells));
+			if (header.dateColumn() >= 0 && header.descriptionColumn() >= 0
+					&& (header.debitColumn() >= 0 || header.amountColumn() >= 0)) {
+				return header;
+			}
+		}
+		return null;
+	}
+
+	private int findDateColumn(List<String> cells) {
+		int fallback = -1;
+		for (int index = 0; index < cells.size(); index++) {
+			String header = normalizeHeader(cells.get(index));
+			if (header.contains("transaction date") || header.equals("txn date") || header.equals("trans date")) {
+				return index;
+			}
+			if (fallback < 0 && header.contains("date")) {
+				fallback = index;
+			}
+		}
+		return fallback;
+	}
+
+	private int findDescriptionColumn(List<String> cells) {
+		for (String preferred : List.of("narration", "particulars", "description", "transaction details", "remarks")) {
+			for (int index = 0; index < cells.size(); index++) {
+				if (normalizeHeader(cells.get(index)).contains(preferred)) {
+					return index;
+				}
+			}
+		}
+		return -1;
+	}
+
+	private int findDebitColumn(List<String> cells) {
+		for (int index = 0; index < cells.size(); index++) {
+			String header = normalizeHeader(cells.get(index));
+			if (header.contains("debit") || header.contains("withdrawal") || header.contains("withdrawn")
+					|| header.contains("paid out")) {
+				return index;
+			}
+		}
+		return -1;
+	}
+
+	private int findCreditColumn(List<String> cells) {
+		for (int index = 0; index < cells.size(); index++) {
+			String header = normalizeHeader(cells.get(index));
+			if (header.contains("credit") || header.contains("deposit") || header.contains("paid in")) {
+				return index;
+			}
+		}
+		return -1;
+	}
+
+	private int findAmountColumn(List<String> cells) {
+		for (int index = 0; index < cells.size(); index++) {
+			String header = normalizeHeader(cells.get(index));
+			if ((header.contains("amount") || header.equals("amt"))
+					&& !header.contains("balance") && !header.contains("debit") && !header.contains("credit")) {
+				return index;
+			}
+		}
+		return -1;
+	}
+
+	private int findTypeColumn(List<String> cells) {
+		for (int index = 0; index < cells.size(); index++) {
+			String header = normalizeHeader(cells.get(index));
+			if (header.equals("type") || header.contains("dr cr") || header.contains("credit debit")
+					|| header.contains("transaction type")) {
+				return index;
+			}
+		}
+		return -1;
+	}
+
+	private ParsedRow parseRow(List<String> row, Header header) {
+		LocalDate date = parseDate(cell(row, header.dateColumn()));
+		String description = cell(row, header.descriptionColumn());
+		if (date == null || description.isBlank()) {
+			return null;
+		}
+		String type = cell(row, header.typeColumn()).toLowerCase(Locale.ROOT);
+		if (isCredit(type)) {
+			return ParsedRow.creditRow();
+		}
+
+		BigDecimal amount = null;
+		boolean assumedDebit = false;
+		if (header.debitColumn() >= 0) {
+			amount = parseAmount(cell(row, header.debitColumn()));
+			if (amount == null && header.amountColumn() >= 0 && isDebit(type)) {
+				amount = parseAmount(cell(row, header.amountColumn()));
+			}
+			if (amount == null || amount.signum() == 0) {
+				if (header.creditColumn() >= 0 && parseAmount(cell(row, header.creditColumn())) != null) {
+					return ParsedRow.creditRow();
+				}
+				return null;
+			}
+		} else {
+			amount = parseAmount(cell(row, header.amountColumn()));
+			if (amount == null || amount.signum() == 0) {
+				return null;
+			}
+			assumedDebit = !isDebit(type) && !amountIsNegative(cell(row, header.amountColumn()));
+		}
+		return ParsedRow.transaction(new Transaction(0, date, description, amount.abs(), assumedDebit));
+	}
+
+	private ParsedRow parseUnheadedRow(List<String> row) {
+		if (row.size() < 3) {
+			return null;
+		}
+		int dateIndex = -1;
+		LocalDate date = null;
+		for (int index = 0; index < row.size(); index++) {
+			date = parseDate(row.get(index));
+			if (date != null) {
+				dateIndex = index;
+				break;
+			}
+		}
+		if (dateIndex < 0) {
+			return null;
+		}
+		int amountIndex = -1;
+		BigDecimal amount = null;
+		for (int index = dateIndex + 1; index < row.size(); index++) {
+			BigDecimal candidate = parseAmount(row.get(index));
+			if (candidate != null) {
+				amountIndex = index;
+				amount = candidate;
+				break;
+			}
+		}
+		if (amountIndex < 0 || amount == null || amount.signum() == 0) {
+			return null;
+		}
+		String description = String.join(" ", row.subList(dateIndex + 1, amountIndex)).trim();
+		if (description.isBlank()) {
+			return null;
+		}
+		String suffix = String.join(" ", row.subList(amountIndex + 1, row.size())).toLowerCase(Locale.ROOT);
+		if (isCredit(suffix)) {
+			return ParsedRow.creditRow();
+		}
+		return ParsedRow.transaction(new Transaction(0, date, description, amount.abs(), !amountIsNegative(row.get(amountIndex))));
+	}
+
+	private LocalDate parseDate(String value) {
+		String candidate = value.trim().replace('T', ' ');
+		int space = candidate.indexOf(' ');
+		if (space > 0) {
+			candidate = candidate.substring(0, space);
+		}
+		for (DateTimeFormatter format : DATE_FORMATS) {
+			try {
+				return LocalDate.parse(candidate, format);
+			} catch (DateTimeParseException ignored) {
+				// Try the remaining common statement date formats.
+			}
+		}
+		return null;
+	}
+
+	private BigDecimal parseAmount(String value) {
+		if (value == null || value.isBlank() || value.equals("-")) {
+			return null;
+		}
+		String normalized = value.trim().replaceAll("(?i)\\b(?:INR|Rs\\.?)\\s*", "")
+				.replace(",", "").replace("₹", "").trim();
+		boolean parenthesized = normalized.startsWith("(") && normalized.endsWith(")");
+		if (parenthesized) {
+			normalized = normalized.substring(1, normalized.length() - 1).trim();
+		}
+		try {
+			BigDecimal amount = new BigDecimal(normalized);
+			return parenthesized ? amount.negate() : amount;
+		} catch (NumberFormatException exception) {
+			return null;
+		}
+	}
+
+	private boolean amountIsNegative(String value) {
+		return value != null && (value.trim().startsWith("-")
+				|| (value.trim().startsWith("(") && value.trim().endsWith(")")));
+	}
+
+	private boolean isDebit(String value) {
+		return value.contains("debit") || value.matches(".*\\bdr\\b.*");
+	}
+
+	private boolean isCredit(String value) {
+		return value.contains("credit") || value.matches(".*\\bcr\\b.*");
+	}
+
+	private String detectBank(String fileName, List<List<String>> rows) {
+		StringBuilder source = new StringBuilder(fileName == null ? "" : fileName).append(' ');
+		for (int index = 0; index < Math.min(rows.size(), 30); index++) {
+			source.append(String.join(" ", rows.get(index))).append(' ');
+		}
+		String normalized = source.toString().toLowerCase(Locale.ROOT);
+		return BANKS.stream()
+				.filter(bank -> bank.aliases().stream().anyMatch(alias -> containsAlias(normalized, alias)))
+				.map(BankAlias::name)
+				.findFirst()
+				.orElse(null);
+	}
+
+	private boolean containsAlias(String source, String alias) {
+		if (alias.length() <= 3) {
+			return Pattern.compile("(?<![a-z0-9])" + Pattern.quote(alias) + "(?![a-z0-9])")
+					.matcher(source).find();
+		}
+		return source.contains(alias);
+	}
+
+	private String fileExtension(String fileName) {
+		if (fileName == null || !fileName.contains(".")) {
+			return "";
+		}
+		return fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
+	}
+
+	private String normalizeHeader(String value) {
+		return value.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", " ").trim();
+	}
+
+	private String cell(List<String> row, int index) {
+		return index >= 0 && index < row.size() ? row.get(index).trim() : "";
+	}
+
+	private ResponseStatusException badRequest(String message) {
+		return new ResponseStatusException(HttpStatus.BAD_REQUEST, message);
+	}
+
+	private record Header(
+			int rowIndex,
+			int dateColumn,
+			int descriptionColumn,
+			int debitColumn,
+			int creditColumn,
+			int amountColumn,
+			int typeColumn) {
+	}
+
+	private record ParsedRow(Transaction transaction, boolean credit) {
+		private static ParsedRow transaction(Transaction transaction) {
+			return new ParsedRow(transaction, false);
+		}
+
+		private static ParsedRow creditRow() {
+			return new ParsedRow(null, true);
+		}
+	}
+
+	private record BankAlias(String name, List<String> aliases) {
+	}
+
+	public record Transaction(int rowNumber, LocalDate expenseDate, String description, BigDecimal amount,
+			boolean assumedDebit) {
+	}
+
+	public record ParsedStatement(String detectedBankName, int skippedCredits, int skippedRows,
+			List<Transaction> transactions) {
+	}
+}
