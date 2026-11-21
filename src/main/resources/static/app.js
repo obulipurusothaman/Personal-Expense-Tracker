@@ -18,6 +18,28 @@ let availableAccounts = [];
 let availableCategories = [];
 let importRows = [];
 
+function openImportDialog() {
+  $("#import-form").reset();
+  $("#import-review").hidden = true;
+  $("#import-rows").replaceChildren();
+  $("#import-message").textContent = "";
+  $("#commit-import").hidden = true;
+  $("#review-import").textContent = "Review file";
+  importRows = [];
+  populateImportAccounts();
+  $("#import-dialog").showModal();
+}
+
+function populateImportAccounts(selectedId = "") {
+  const accountSelect = $("#import-account");
+  accountSelect.innerHTML = availableAccounts.length
+    ? `<option value="">Choose an account</option>${availableAccounts.map((account) =>
+      `<option value="${account.id}">${escapeHtml(account.bankName)}</option>`).join("")}`
+    : `<option value="">Add a bank account first</option>`;
+  accountSelect.value = selectedId ? String(selectedId) : "";
+  accountSelect.disabled = availableAccounts.length === 0;
+}
+
 function offlineDb() {
   if (!offlineDbPromise) {
     offlineDbPromise = new Promise((resolve, reject) => {
@@ -31,28 +53,6 @@ function offlineDb() {
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error || new Error("Offline storage could not be opened."));
     });
-
-    function openImportDialog() {
-      $("#import-form").reset();
-      $("#import-review").hidden = true;
-      $("#import-rows").replaceChildren();
-      $("#import-message").textContent = "";
-      $("#commit-import").hidden = true;
-      $("#review-import").textContent = "Review file";
-      importRows = [];
-      populateImportAccounts();
-      $("#import-dialog").showModal();
-    }
-
-    function populateImportAccounts(selectedId = "") {
-      const accountSelect = $("#import-account");
-      accountSelect.innerHTML = availableAccounts.length
-        ? `<option value="">Choose an account</option>${availableAccounts.map((account) =>
-          `<option value="${account.id}">${escapeHtml(account.bankName)}</option>`).join("")}`
-        : `<option value="">Add a bank account first</option>`;
-      accountSelect.value = selectedId ? String(selectedId) : "";
-      accountSelect.disabled = availableAccounts.length === 0;
-    }
 
     function renderImportPreview(preview) {
       populateImportAccounts(preview.suggestedAccountId || "");
