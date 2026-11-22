@@ -3,15 +3,23 @@ package com.example.demo;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.time.DateTimeException;
 import java.time.LocalDate;
+import java.time.Month;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeFormatterBuilder;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.encryption.InvalidPasswordException;
+import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.poi.ss.usermodel.DataFormatter;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -48,19 +56,45 @@ public class StatementFileParser {
 			new DateTimeFormatterBuilder().parseCaseInsensitive().appendPattern("M/d/uuuu").toFormatter(Locale.ROOT),
 			new DateTimeFormatterBuilder().parseCaseInsensitive().appendPattern("M/d/uu").toFormatter(Locale.ROOT),
 			new DateTimeFormatterBuilder().parseCaseInsensitive().appendPattern("d/M/uu").toFormatter(Locale.ROOT));
+	private static final String MONTH_NAMES =
+			"(?:January|February|March|April|May|June|July|August|September|October|November|December"
+					+ "|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)";
+	private static final Pattern TEXT_DATE_PREFIX = Pattern.compile(
+			"(?i)^(?:(\\d{1,2})(?:st|nd|rd|th)?\\s*(" + MONTH_NAMES + ")\\.?|("
+					+ MONTH_NAMES + ")\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?)(?:\\s*,?\\s*(\\d{4}))?"
+					+ "(?:\\s*[-:|]\\s*|\\s+|$)(.*)$");
+	private static final Pattern LEDGER_AMOUNT_AT_END = Pattern.compile(
+			"(?i)^(.+?)\\s+(\\d[\\d,]*(?:\\.\\d{1,2})?"
+					+ "(?:\\s*\\+\\s*\\d[\\d,]*(?:\\.\\d{1,2})?)*)\\s*(?:rs\\.?)?$");
+	private static final Pattern LEDGER_AMOUNT_AT_START = Pattern.compile(
+			"(?i)^(?:rs\\.?\\s*)?(\\d[\\d,]*(?:\\.\\d{1,2})?)(?:\\s*rs\\.?)?\\s+(.+)$");
 
 	public ParsedStatement parse(String fileName, byte[] content) {
 		if (content == null || content.length == 0) {
 			throw badRequest("Choose a non-empty statement file.");
 		}
 		String extension = fileExtension(fileName);
+		if ("pdf".equals(extension)) {
+			String text = extractPdfText(content);
+			if (text.isBlank()) {
+				throw badRequest(
+						"This PDF has no selectable text. Scanned PDFs require OCR; export the statement as CSV or Excel.");
+			}
+			return parse(fileName + ".txt", text.getBytes(StandardCharsets.UTF_8));
+		}
+		if ("txt".equals(extension)) {
+			String text = decodeText(content);
+			if (!hasDelimitedTable(text) && isDateGroupedLedger(text)) {
+				return parseDateGroupedLedger(fileName, text);
+			}
+		}
 		List<List<String>> table;
 		if ("xlsx".equals(extension)) {
 			table = readWorkbook(content);
 		} else if ("csv".equals(extension) || "txt".equals(extension)) {
 			table = readDelimitedText(content, extension);
 		} else {
-			throw badRequest("Use a CSV, Excel (.xlsx), or delimited text (.txt) file.");
+			throw badRequest("Use a CSV, Excel (.xlsx), PDF, or text (.txt) file.");
 		}
 		if (table.size() > MAX_ROWS + 30) {
 			throw badRequest("The statement is too large. Import up to 2,000 transactions at a time.");
@@ -107,6 +141,16 @@ public class StatementFileParser {
 		return new ParsedStatement(bankName, skippedCredits, skippedRows, transactions);
 	}
 
+	private String extractPdfText(byte[] content) {
+		try (PDDocument document = Loader.loadPDF(content)) {
+			return new PDFTextStripper().getText(document);
+		} catch (InvalidPasswordException exception) {
+			throw badRequest("Password-protected PDFs are not supported. Remove the password and try again.");
+		} catch (IOException exception) {
+			throw badRequest("The PDF file could not be read.");
+		}
+	}
+
 	private List<List<String>> readWorkbook(byte[] content) {
 		try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(content))) {
 			if (workbook.getNumberOfSheets() == 0) {
@@ -130,10 +174,7 @@ public class StatementFileParser {
 	}
 
 	private List<List<String>> readDelimitedText(byte[] content, String extension) {
-		String text = new String(content, java.nio.charset.StandardCharsets.UTF_8);
-		if (!text.isEmpty() && text.charAt(0) == '\uFEFF') {
-			text = text.substring(1);
-		}
+		String text = decodeText(content);
 		if (text.isBlank()) {
 			throw badRequest("The statement file is empty.");
 		}
@@ -146,6 +187,181 @@ public class StatementFileParser {
 					.map(line -> List.of(line.split("\\s{2,}", -1))).toList();
 		}
 		return parseDelimited(text, delimiter);
+	}
+
+	private String decodeText(byte[] content) {
+		String text = new String(content, java.nio.charset.StandardCharsets.UTF_8);
+		return !text.isEmpty() && text.charAt(0) == '\uFEFF' ? text.substring(1) : text;
+	}
+
+	private boolean hasDelimitedTable(String text) {
+		for (char delimiter : new char[] { ',', '\t', ';', '|' }) {
+			int rowsWithColumns = 0;
+			for (String line : text.lines().toList()) {
+				if (!line.isBlank() && countUnquoted(line, delimiter) >= 2 && ++rowsWithColumns >= 2) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	private boolean isDateGroupedLedger(String text) {
+		LocalDate currentDate = null;
+		int currentYear = LocalDate.now().getYear();
+		for (String line : text.lines().map(String::trim).toList()) {
+			if (line.isBlank() || isBalanceLine(line)) {
+				continue;
+			}
+			DatePrefix datePrefix = parseTextDatePrefix(line, currentYear);
+			if (datePrefix != null) {
+				currentDate = datePrefix.date();
+				ParsedRow parsed = parseLedgerLine(datePrefix.remainder(), currentDate, 0);
+				if (parsed.transaction() != null) {
+					return true;
+				}
+			} else if (currentDate != null && parseLedgerLine(line, currentDate, 0).transaction() != null) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private ParsedStatement parseDateGroupedLedger(String fileName, String text) {
+		int currentYear = LocalDate.now().getYear();
+		LocalDate currentDate = null;
+		int skippedCredits = 0;
+		int skippedRows = 0;
+		List<Transaction> transactions = new ArrayList<>();
+
+		int rowNumber = 0;
+		for (String rawLine : text.lines().toList()) {
+			rowNumber++;
+			String line = rawLine.trim();
+			if (line.isBlank() || isBalanceLine(line)) {
+				continue;
+			}
+			DatePrefix datePrefix = parseTextDatePrefix(line, currentYear);
+			if (datePrefix != null) {
+				currentDate = datePrefix.date();
+				line = datePrefix.remainder();
+				if (line.isBlank()) {
+					continue;
+				}
+			}
+			if (currentDate == null) {
+				continue;
+			}
+
+			ParsedRow parsed = parseLedgerLine(line, currentDate, rowNumber);
+			if (parsed.credit()) {
+				skippedCredits++;
+			} else if (parsed.transaction() != null) {
+				Transaction transaction = parsed.transaction();
+				transactions.add(new Transaction(
+						transaction.rowNumber(),
+						transaction.expenseDate(),
+						transaction.description().substring(0, Math.min(120, transaction.description().length())),
+						transaction.amount(),
+						true));
+				if (transactions.size() > MAX_ROWS) {
+					throw badRequest("The statement has more than 2,000 expense rows. Import a smaller date range.");
+				}
+			} else if (line.matches(".*\\d.*")) {
+				skippedRows++;
+			}
+		}
+
+		if (transactions.isEmpty()) {
+			throw badRequest("No expense rows could be read from the date-grouped text.");
+		}
+		return new ParsedStatement(detectBank(fileName, List.of()), skippedCredits, skippedRows, transactions);
+	}
+
+	private DatePrefix parseTextDatePrefix(String line, int defaultYear) {
+		Matcher matcher = TEXT_DATE_PREFIX.matcher(line);
+		if (!matcher.matches()) {
+			return null;
+		}
+		String monthText = matcher.group(1) == null ? matcher.group(3) : matcher.group(2);
+		String dayText = matcher.group(1) == null ? matcher.group(4) : matcher.group(1);
+		Month month = parseMonth(monthText);
+		if (month == null) {
+			return null;
+		}
+		int year = matcher.group(5) == null ? defaultYear : Integer.parseInt(matcher.group(5));
+		try {
+			return new DatePrefix(
+					LocalDate.of(year, month, Integer.parseInt(dayText)),
+					matcher.group(6).trim());
+		} catch (DateTimeException exception) {
+			return null;
+		}
+	}
+
+	private Month parseMonth(String value) {
+		String month = value.replace(".", "");
+		for (String pattern : List.of("MMMM", "MMM")) {
+			try {
+				return Month.from(new DateTimeFormatterBuilder()
+						.parseCaseInsensitive()
+						.appendPattern(pattern)
+						.toFormatter(Locale.ENGLISH)
+						.parse(month));
+			} catch (DateTimeParseException ignored) {
+				// Try the abbreviated month format.
+			}
+		}
+		return null;
+	}
+
+	private ParsedRow parseLedgerLine(String line, LocalDate date, int rowNumber) {
+		if (line.isBlank()) {
+			return ParsedRow.skippedRow();
+		}
+		if (isCredit(line.toLowerCase(Locale.ROOT))) {
+			return ParsedRow.creditRow();
+		}
+
+		Matcher trailingAmount = LEDGER_AMOUNT_AT_END.matcher(line);
+		String description;
+		String amounts;
+		if (trailingAmount.matches()) {
+			description = trailingAmount.group(1).trim();
+			amounts = trailingAmount.group(2);
+		} else {
+			Matcher leadingAmount = LEDGER_AMOUNT_AT_START.matcher(line);
+			if (!leadingAmount.matches()) {
+				return ParsedRow.skippedRow();
+			}
+			amounts = leadingAmount.group(1);
+			description = leadingAmount.group(2).trim();
+		}
+		BigDecimal amount = sumAmounts(amounts);
+		if (description.isBlank() || amount == null || amount.signum() <= 0) {
+			return ParsedRow.skippedRow();
+		}
+		return ParsedRow.transaction(new Transaction(rowNumber, date, description, amount, true));
+	}
+
+	private BigDecimal sumAmounts(String value) {
+		BigDecimal total = BigDecimal.ZERO;
+		for (String part : value.split("\\s*\\+\\s*")) {
+			BigDecimal amount = parseAmount(part);
+			if (amount == null || amount.signum() <= 0) {
+				return null;
+			}
+			total = total.add(amount);
+		}
+		return total;
+	}
+
+	private boolean isBalanceLine(String line) {
+		String value = line.toLowerCase(Locale.ROOT);
+		return value.startsWith("current balance")
+				|| value.startsWith("opening balance")
+				|| value.startsWith("closing balance")
+				|| value.startsWith("available balance");
 	}
 
 	private char detectDelimiter(String text) {
@@ -495,9 +711,16 @@ public class StatementFileParser {
 		private static ParsedRow creditRow() {
 			return new ParsedRow(null, true);
 		}
+
+		private static ParsedRow skippedRow() {
+			return new ParsedRow(null, false);
+		}
 	}
 
 	private record BankAlias(String name, List<String> aliases) {
+	}
+
+	private record DatePrefix(LocalDate date, String remainder) {
 	}
 
 	public record Transaction(int rowNumber, LocalDate expenseDate, String description, BigDecimal amount,

@@ -10,8 +10,8 @@
   <title>Pennywise — Personal finance</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/icons/pennywise-192.png">
-  <link rel="stylesheet" href="/styles.css?v=8">
-  <script src="/app.js?v=8" defer></script>
+  <link rel="stylesheet" href="/styles.css?v=9">
+  <script src="/app.js?v=9" defer></script>
 </head>
 <body>
   <main id="startup-screen" class="startup-screen" aria-live="polite">
@@ -186,9 +186,9 @@
         <div><div class="eyebrow">BRING YOUR RECORDS</div><h2>Import expenses</h2></div>
         <button type="button" class="close-button" data-close="import-dialog" aria-label="Close">×</button>
       </div>
-      <p class="field-help">Choose a CSV, Excel (.xlsx), or delimited text (.txt) statement. The file is processed by this app and is not saved. Credits are skipped; current account balances stay unchanged.</p>
+      <p class="field-help">Choose a CSV, Excel (.xlsx), text (.txt), or selectable-text PDF statement. Scanned PDFs need OCR and are not supported. The file is processed by this app and is not saved. Credits are skipped; current account balances stay unchanged.</p>
       <label class="field-label">Statement file
-        <input id="import-file" name="file" type="file" accept=".csv,.xlsx,.txt" required>
+        <input id="import-file" name="file" type="file" accept=".csv,.xlsx,.pdf,.txt" required>
       </label>
       <div id="import-review" class="import-review" hidden>
         <div id="import-detection" class="import-detection" role="status"></div>
