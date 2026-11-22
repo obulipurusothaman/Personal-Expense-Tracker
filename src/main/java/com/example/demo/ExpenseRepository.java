@@ -11,6 +11,8 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
 
 	boolean existsByAccount_Owner_Id(Long ownerId);
 
+	List<Expense> findByBalanceAdjustedFalse();
+
 	Optional<Expense> findByIdAndAccount_Owner_Id(Long id, Long ownerId);
 
 	Optional<Expense> findByAccount_Owner_IdAndAccount_IdAndClientRequestId(

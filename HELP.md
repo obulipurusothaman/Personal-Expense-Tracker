@@ -20,12 +20,12 @@ Run the test suite with:
 
 ## Features
 
-- Add multiple bank accounts with their current INR balances.
-- Log and delete dated expenses; adding an expense reduces that account's balance and deleting it restores the amount.
+- Add multiple bank accounts with a starting INR balance.
+- Log and delete dated expenses; manual and imported expenses reduce the remaining balance, and deleting an expense restores the amount.
 - Remove a bank account; after confirmation, its linked expense history is permanently deleted too.
 - Browse category spending with daily, weekly, monthly, or yearly date filters.
 - Use the built-in expense categories or create custom categories.
-- Import CSV, Excel (`.xlsx`), text (`.txt`), and selectable-text PDF bank statements. Scanned/image-only PDFs and password-protected PDFs are not supported. Date-grouped text ledgers are also supported when they use month/day headings and put each expense description and amount on one line; amounts joined with `+` are added together, and missing years use the current year. The app suggests an account from the detected bank and categories from transaction descriptions; review and edit rows before importing. Credits and suspected duplicates are excluded by default. Importing historical transactions does not change the account's current balance.
+- Import CSV, Excel (`.xlsx`), text (`.txt`), and selectable-text PDF bank statements. Scanned/image-only PDFs and password-protected PDFs are not supported. Date-grouped text ledgers are also supported when they use month/day headings and put each expense description and amount on one line; amounts joined with `+` are added together, and missing years use the current year. Set the account's starting balance to the balance before the expenses being imported. The app suggests an account from the detected bank and categories from transaction descriptions; review and edit rows before importing. Selected expenses reduce the balance; credits and suspected duplicates are excluded by default.
 - View a separate spending pie chart and download an `.xlsx` report for each bank account.
 - Each browser gets its own private profile automatically. Use a short-lived one-time code to link your own devices to the same profile.
 - Install the responsive app on a phone as a PWA. After opening it online once, the app stores a private snapshot on that device and supports offline expense entries and deletions. Queued changes sync when the device reconnects; other devices will not see them before then. Adding/removing accounts, creating categories, exports, and device linking require an internet connection.

@@ -97,4 +97,8 @@ public class Expense {
 	public boolean isBalanceAdjusted() {
 		return balanceAdjusted;
 	}
+
+	public void setBalanceAdjusted(boolean balanceAdjusted) {
+		this.balanceAdjusted = balanceAdjusted;
+	}
 }

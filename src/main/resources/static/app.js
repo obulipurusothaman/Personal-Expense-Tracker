@@ -38,6 +38,11 @@ function populateImportAccounts(selectedId = "") {
     : `<option value="">Add a bank account first</option>`;
   accountSelect.value = selectedId ? String(selectedId) : "";
   accountSelect.disabled = availableAccounts.length === 0;
+  const accountHint = $("#import-account-hint");
+  accountHint.hidden = availableAccounts.length > 0;
+  accountHint.textContent = availableAccounts.length
+    ? ""
+    : "Add a bank account before importing. Close this dialog, select Add account, then reopen the statement import.";
 }
 
 function offlineDb() {
@@ -100,8 +105,15 @@ function offlineDb() {
     function updateImportButton() {
       const accountId = $("#import-account").value;
       const selectedCount = importRows.filter((row) => row.include).length;
-      $("#commit-import").disabled = !accountId || selectedCount === 0 || !navigator.onLine;
-      $("#commit-import").textContent = `Import ${selectedCount} selected`;
+      const online = navigator.onLine;
+      $("#commit-import").disabled = !accountId || selectedCount === 0 || !online;
+      $("#commit-import").textContent = !accountId
+        ? availableAccounts.length ? "Select a bank account" : "Add a bank account first"
+        : selectedCount === 0
+          ? "Select expenses to import"
+          : !online
+            ? "Connect to import"
+            : `Import ${selectedCount} selected`;
     }
 
     $("#import-file").addEventListener("change", () => {
@@ -170,7 +182,7 @@ function offlineDb() {
         });
         $("#import-dialog").close();
         await refreshDashboard();
-        showToast(`Imported ${result.imported} expense${result.imported === 1 ? "" : "s"}; account balance unchanged.`);
+        showToast(`Imported ${result.imported} expense${result.imported === 1 ? "" : "s"}; balance updated.`);
       } catch (error) {
         $("#import-message").textContent = error.message;
       } finally {
@@ -430,15 +442,18 @@ function buildOfflineView(snapshot, mutations) {
     const createdForAccount = pendingCreates
       .filter((mutation) => String(mutation.body.accountId) === String(account.id))
       .reduce((total, mutation) => total + Number(mutation.body.amount), 0);
+    const legacyImportedForAccount = snapshot.expenses
+      .filter((expense) => String(expense.accountId) === String(account.id)
+        && expense.balanceAdjusted === false)
+      .reduce((total, expense) => total + Number(expense.amount), 0);
     const deletedForAccount = snapshot.expenses
       .filter((expense) => deletedIds.has(String(expense.id))
-        && String(expense.accountId) === String(account.id)
-        && expense.balanceAdjusted !== false)
+        && String(expense.accountId) === String(account.id))
       .reduce((total, expense) => total + Number(expense.amount), 0);
     return {
       id: account.id,
       bankName: account.bankName,
-      balance: Number(account.balance) - createdForAccount + deletedForAccount,
+      balance: Number(account.balance) - legacyImportedForAccount - createdForAccount + deletedForAccount,
       spent: accountExpenses.reduce((total, expense) => total + Number(expense.amount), 0),
       categoryBreakdown: [...categoryTotals.values()].sort((first, second) => second.amount - first.amount),
       recentExpenses: accountExpenses.slice().sort(compareExpenses).slice(0, 5)
@@ -479,7 +494,7 @@ function renderDashboard(dashboard) {
           <span class="summary-icon mint">#${index + 1}</span>
         </div>
         <div class="summary-value">${money(account.balance)}</div>
-        <div class="summary-foot"><span class="status-dot"></span>Available in this account</div>
+        <div class="summary-foot"><span class="status-dot"></span>Remaining balance</div>
         <div class="card-decoration balance-decoration"></div>
       </article>`).join("")
     : `<article class="summary-card balance-card">
@@ -520,7 +535,7 @@ function renderDashboard(dashboard) {
         <div class="account-card-head">
           <div class="bank-mark color-${index % 4}">${escapeHtml(shortName)}</div>
           <div class="bank-info"><strong>${escapeHtml(account.bankName)}</strong><span>${account.recentExpenses.length ? `${account.recentExpenses.length} recent expense${account.recentExpenses.length === 1 ? "" : "s"}` : "Ready to track"}</span></div>
-          <div class="bank-balance"><strong>${money(account.balance)}</strong><span>Available balance</span></div>
+          <div class="bank-balance"><strong>${money(account.balance)}</strong><span>Remaining balance</span></div>
         </div>
         <div class="account-divider"></div>
         <div class="chart-area">
@@ -593,7 +608,7 @@ function renderExpenses(expenses) {
       <td>${escapeHtml(expense.bankName)}</td>
       <td>${shortDate(expense.expenseDate)}</td>
       <td class="amount-cell">${money(expense.amount)}</td>
-      <td><button class="delete-expense" data-expense-id="${expense.id}" data-balance-adjusted="${expense.balanceAdjusted !== false}" title="Delete expense" aria-label="Delete ${escapeHtml(expense.description)}">×</button></td>
+      <td><button class="delete-expense" data-expense-id="${expense.id}" title="Delete expense" aria-label="Delete ${escapeHtml(expense.description)}">×</button></td>
     </tr>`;
   }).join("");
 }
@@ -788,9 +803,7 @@ window.addEventListener("appinstalled", () => {
 $("#expense-rows").addEventListener("click", async (event) => {
   const button = event.target.closest("[data-expense-id]");
   if (!button) return;
-  const confirmation = button.dataset.balanceAdjusted === "false"
-    ? "Delete this imported expense? The account balance will remain unchanged."
-    : "Delete this expense? The account balance will be restored.";
+  const confirmation = "Delete this expense? The amount will be added back to the account balance.";
   if (!window.confirm(confirmation)) return;
   const expenseId = button.dataset.expenseId;
   if (expenseId.startsWith("local:")) {

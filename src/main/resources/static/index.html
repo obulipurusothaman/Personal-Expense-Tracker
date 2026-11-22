@@ -10,8 +10,8 @@
   <title>Pennywise — Personal finance</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/icons/pennywise-192.png">
-  <link rel="stylesheet" href="/styles.css?v=9">
-  <script src="/app.js?v=9" defer></script>
+  <link rel="stylesheet" href="/styles.css?v=12">
+  <script src="/app.js?v=12" defer></script>
 </head>
 <body>
   <main id="startup-screen" class="startup-screen" aria-live="polite">
@@ -166,8 +166,8 @@
     <form id="account-form" class="modal-form">
       <div class="modal-header"><div><div class="eyebrow">YOUR MONEY, TOGETHER</div><h2>Add a bank account</h2></div><button type="button" class="close-button" data-close="account-dialog" aria-label="Close">×</button></div>
       <label class="field-label">Bank name<input name="bankName" maxlength="80" required placeholder="e.g. HDFC Bank"></label>
-      <label class="field-label">Current balance <span class="field-suffix">INR</span><input name="balance" type="number" min="0" step="0.01" required placeholder="0.00"></label>
-      <p class="field-help">Your starting balance helps you see the full picture across all your accounts.</p>
+      <label class="field-label">Starting balance <span class="field-suffix">INR</span><input name="balance" type="number" min="0" step="0.01" required placeholder="0.00"></label>
+      <p class="field-help">Enter the balance before the expenses you want to track. Manual and imported expenses reduce this amount.</p>
       <div class="modal-actions"><button type="button" class="button button-quiet" data-close="account-dialog">Cancel</button><button class="button button-primary" type="submit">Add account</button></div>
     </form>
   </dialog>
@@ -186,14 +186,15 @@
         <div><div class="eyebrow">BRING YOUR RECORDS</div><h2>Import expenses</h2></div>
         <button type="button" class="close-button" data-close="import-dialog" aria-label="Close">×</button>
       </div>
-      <p class="field-help">Choose a CSV, Excel (.xlsx), text (.txt), or selectable-text PDF statement. Scanned PDFs need OCR and are not supported. The file is processed by this app and is not saved. Credits are skipped; current account balances stay unchanged.</p>
+      <p class="field-help">Choose a CSV, Excel (.xlsx), text (.txt), or selectable-text PDF statement. Scanned PDFs need OCR and are not supported. The file is processed by this app and is not saved. Selected expenses reduce the account balance; credits are skipped.</p>
       <label class="field-label">Statement file
         <input id="import-file" name="file" type="file" accept=".csv,.xlsx,.pdf,.txt" required>
       </label>
+      <p id="import-account-hint" class="field-help" hidden></p>
       <div id="import-review" class="import-review" hidden>
         <div id="import-detection" class="import-detection" role="status"></div>
         <label class="field-label">Bank account
-          <select id="import-account" name="accountId" required></select>
+          <select id="import-account" name="accountId"></select>
         </label>
         <p id="import-summary" class="field-help"></p>
         <div class="import-table-wrap">

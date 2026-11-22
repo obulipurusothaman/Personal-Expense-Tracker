@@ -84,10 +84,12 @@ class ExpenseServiceTests {
 	}
 
 	@Test
-	void importingExpensesPreservesTheCurrentBalanceAndIsRetrySafe() {
+	void manualAndImportedExpensesReduceBalanceAndDeletionRestoresIt() {
 		AccountDto account = expenseService.createAccount(owner,
 				new AccountRequest("Example Bank", new BigDecimal("1000.00")));
 		CategoryDto category = expenseService.createCategory(owner, new CategoryRequest("Coffee"));
+		ExpenseDto manualExpense = expenseService.createExpense(owner, new ExpenseRequest(
+				account.id(), category.id(), "Coffee", new BigDecimal("100.00"), LocalDate.now()));
 		String requestId = UUID.randomUUID().toString();
 		StatementImportRequest request = new StatementImportRequest(account.id(), List.of(
 				new StatementImportRequest.Row(
@@ -98,14 +100,47 @@ class ExpenseServiceTests {
 
 		assertEquals(1, imported.imported());
 		assertEquals(1, retried.alreadyImported());
-		assertEquals(new BigDecimal("1000.00"), expenseService.getAccounts(owner).get(0).balance());
+		assertEquals(new BigDecimal("875.00"), expenseService.getAccounts(owner).get(0).balance());
 		Expense expense = expenseRepository.findByAccount_Owner_IdOrderByExpenseDateDescIdDesc(owner.getId())
 				.get(0);
-		assertEquals(false, expense.isBalanceAdjusted());
+		assertEquals(true, expense.isBalanceAdjusted());
 
+		expenseService.deleteExpense(owner, manualExpense.id());
+		assertEquals(new BigDecimal("975.00"), expenseService.getAccounts(owner).get(0).balance());
 		expenseService.deleteExpense(owner, expense.getId());
-
 		assertEquals(new BigDecimal("1000.00"), expenseService.getAccounts(owner).get(0).balance());
+	}
+
+	@Test
+	void importingExpensesMayShowANegativeRemainingBalance() {
+		AccountDto account = expenseService.createAccount(owner,
+				new AccountRequest("Example Bank", new BigDecimal("50.00")));
+		CategoryDto category = expenseService.createCategory(owner, new CategoryRequest("Coffee"));
+		StatementImportRequest request = new StatementImportRequest(account.id(), List.of(
+				new StatementImportRequest.Row(
+						category.id(), "Coffee shop", new BigDecimal("75.00"), LocalDate.now(),
+						UUID.randomUUID().toString())));
+
+		expenseService.importExpenses(owner, request);
+
+		assertEquals(new BigDecimal("-25.00"), expenseService.getAccounts(owner).get(0).balance());
+	}
+
+	@Test
+	void legacyImportedExpensesAreDeductedExactlyOnce() {
+		AccountDto account = expenseService.createAccount(owner,
+				new AccountRequest("Example Bank", new BigDecimal("1000.00")));
+		CategoryDto category = expenseService.createCategory(owner, new CategoryRequest("Coffee"));
+		Expense legacyExpense = expenseRepository.save(new Expense(
+				accountRepository.findById(account.id()).orElseThrow(),
+				categoryRepository.findById(category.id()).orElseThrow(),
+				"Older import", new BigDecimal("100.00"), LocalDate.now(), UUID.randomUUID().toString(), false));
+
+		expenseService.applyLegacyImportedExpenseBalanceAdjustments();
+		expenseService.applyLegacyImportedExpenseBalanceAdjustments();
+
+		assertEquals(new BigDecimal("900.00"), expenseService.getAccounts(owner).get(0).balance());
+		assertEquals(true, expenseRepository.findById(legacyExpense.getId()).orElseThrow().isBalanceAdjusted());
 	}
 
 	@Test

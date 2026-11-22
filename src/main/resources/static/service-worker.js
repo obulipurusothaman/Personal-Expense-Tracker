@@ -1,9 +1,9 @@
-const CACHE_NAME = "pennywise-shell-v9";
+const CACHE_NAME = "pennywise-shell-v12";
 const APP_SHELL = [
   "/",
   "/index.html",
-  "/styles.css?v=9",
-  "/app.js?v=9",
+  "/styles.css?v=12",
+  "/app.js?v=12",
   "/manifest.webmanifest",
   "/icons/pennywise.svg",
   "/icons/pennywise-192.png",

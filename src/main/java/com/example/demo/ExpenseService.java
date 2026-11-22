@@ -115,12 +115,22 @@ public class ExpenseService {
 			if (category.getOwner() != null && !category.getOwner().getId().equals(owner.getId())) {
 				throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Category not found");
 			}
+			account.setBalance(account.getBalance().subtract(row.amount()));
 			expenseRepository.save(new Expense(
 					account, category, row.description().trim(), row.amount(), row.expenseDate(),
-					row.clientRequestId(), false));
+					row.clientRequestId(), true));
 			imported++;
 		}
 		return new StatementImportResult(imported, alreadyImported);
+	}
+
+	@Transactional
+	public void applyLegacyImportedExpenseBalanceAdjustments() {
+		for (Expense expense : expenseRepository.findByBalanceAdjustedFalse()) {
+			BankAccount account = expense.getAccount();
+			account.setBalance(account.getBalance().subtract(expense.getAmount()));
+			expense.setBalanceAdjusted(true);
+		}
 	}
 
 	@Transactional
