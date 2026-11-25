@@ -273,7 +273,13 @@ async function saveOfflineAccount(account, mutation) {
 }
 
 function isNetworkError(error) {
-  return !navigator.onLine || error instanceof TypeError;
+  return !navigator.onLine
+    || error instanceof TypeError
+    || error.status === 502
+    || error.status === 503
+    || error.status === 504
+    || (error.status >= 520 && error.status <= 527)
+    || error.status === 530;
 }
 
 function updateConnectionStatus(pendingCount) {
@@ -322,7 +328,11 @@ async function csrfToken() {
   const existing = readCookie("XSRF-TOKEN");
   if (existing) return existing;
   const response = await fetch("/api/auth/csrf", { credentials: "same-origin" });
-  if (!response.ok) throw new Error("Could not initialize a secure session.");
+  if (!response.ok) {
+    const error = new Error("Could not initialize a secure session.");
+    error.status = response.status;
+    throw error;
+  }
   const body = await response.json();
   return readCookie("XSRF-TOKEN") || body.token;
 }
@@ -662,7 +672,9 @@ async function submitForm(form, url, successMessage, onSuccess) {
   if (isExpense || isAccount) body.clientRequestId = crypto.randomUUID();
   const localAccount = isExpense && String(body.accountId).startsWith("local:");
   try {
-    if (localAccount) throw new TypeError("Account is waiting to sync.");
+    if (localAccount || ((isAccount || isExpense) && !navigator.onLine)) {
+      throw new TypeError("This change will be saved offline.");
+    }
     await api(url, { method: "POST", body: JSON.stringify(body) });
   } catch (error) {
     if (!isNetworkError(error)) {

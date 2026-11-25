@@ -1,9 +1,9 @@
-const CACHE_NAME = "pennywise-shell-v13";
+const CACHE_NAME = "pennywise-shell-v15";
 const APP_SHELL = [
   "/",
   "/index.html",
-  "/styles.css?v=13",
-  "/app.js?v=13",
+  "/styles.css?v=15",
+  "/app.js?v=15",
   "/manifest.webmanifest",
   "/icons/pennywise.svg",
   "/icons/pennywise-192.png",
@@ -33,7 +33,17 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (request.mode === "navigate") {
-    event.respondWith(fetch(request).catch(() => caches.match("/index.html")));
+    event.respondWith((async () => {
+      try {
+        const response = await fetch(request);
+        if (response.ok) return response;
+        return (await caches.match("/index.html")) || response;
+      } catch (error) {
+        const cached = await caches.match("/index.html");
+        if (cached) return cached;
+        throw error;
+      }
+    })());
     return;
   }
 
