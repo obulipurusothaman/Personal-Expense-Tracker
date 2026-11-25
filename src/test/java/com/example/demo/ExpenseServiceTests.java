@@ -67,6 +67,18 @@ class ExpenseServiceTests {
 	}
 
 	@Test
+	void retryingAnOfflineAccountRequestDoesNotCreateDuplicateAccounts() {
+		String requestId = UUID.randomUUID().toString();
+		AccountRequest request = new AccountRequest("Example Bank", new BigDecimal("1000.00"), requestId);
+
+		AccountDto first = expenseService.createAccount(owner, request);
+		AccountDto retry = expenseService.createAccount(owner, request);
+
+		assertEquals(first.id(), retry.id());
+		assertEquals(1, accountRepository.findByOwner_Id(owner.getId()).size());
+	}
+
+	@Test
 	void retryingAnOfflineExpenseRequestDoesNotDeductTheBalanceTwice() {
 		AccountDto account = expenseService.createAccount(owner,
 				new AccountRequest("Example Bank", new BigDecimal("1000.00")));

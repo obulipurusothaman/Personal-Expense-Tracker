@@ -32,17 +32,18 @@ function openImportDialog() {
 
 function populateImportAccounts(selectedId = "") {
   const accountSelect = $("#import-account");
-  accountSelect.innerHTML = availableAccounts.length
-    ? `<option value="">Choose an account</option>${availableAccounts.map((account) =>
+  const importableAccounts = availableAccounts.filter((account) => !String(account.id).startsWith("local:"));
+  accountSelect.innerHTML = importableAccounts.length
+    ? `<option value="">Choose an account</option>${importableAccounts.map((account) =>
       `<option value="${account.id}">${escapeHtml(account.bankName)}</option>`).join("")}`
     : `<option value="">Add a bank account first</option>`;
   accountSelect.value = selectedId ? String(selectedId) : "";
-  accountSelect.disabled = availableAccounts.length === 0;
+  accountSelect.disabled = importableAccounts.length === 0;
   const accountHint = $("#import-account-hint");
-  accountHint.hidden = availableAccounts.length > 0;
-  accountHint.textContent = availableAccounts.length
+  accountHint.hidden = importableAccounts.length > 0;
+  accountHint.textContent = importableAccounts.length
     ? ""
-    : "Add a bank account before importing. Close this dialog, select Add account, then reopen the statement import.";
+    : "Add and sync a bank account before importing. Close this dialog, select Add account, then reopen the statement import.";
 }
 
 function offlineDb() {
@@ -233,8 +234,10 @@ function saveOfflineSnapshot(snapshot) {
 async function getPendingMutations() {
   if (!profileId) return [];
   const records = await storeRequest("mutations", "readonly", (store) => store.getAll());
+  const priority = (mutation) => mutation.type === "create-account" ? 0 : 1;
   return records.filter((record) => record.profileId === profileId)
-    .sort((first, second) => first.createdAt.localeCompare(second.createdAt));
+    .sort((first, second) => first.createdAt.localeCompare(second.createdAt)
+      || priority(first) - priority(second));
 }
 
 function savePendingMutation(mutation) {
@@ -243,6 +246,30 @@ function savePendingMutation(mutation) {
 
 function removePendingMutation(id) {
   return storeRequest("mutations", "readwrite", (store) => store.delete(id));
+}
+
+async function saveOfflineAccount(account, mutation) {
+  const database = await offlineDb();
+  await new Promise((resolve, reject) => {
+    const transaction = database.transaction(["snapshots", "mutations"], "readwrite");
+    const snapshots = transaction.objectStore("snapshots");
+    const request = snapshots.get(profileId);
+    request.onsuccess = () => {
+      const snapshot = request.result?.data;
+      if (!snapshot) {
+        transaction.abort();
+        reject(new Error("Connect to the internet once before adding an offline bank account."));
+        return;
+      }
+      snapshot.accounts.push(account);
+      snapshots.put({ ...request.result, data: snapshot });
+      transaction.objectStore("mutations").put(mutation);
+    };
+    request.onerror = () => reject(request.error || new Error("Offline wallet could not be loaded."));
+    transaction.oncomplete = resolve;
+    transaction.onerror = () => reject(transaction.error || new Error("Offline account could not be saved."));
+    transaction.onabort = () => reject(transaction.error || new Error("Offline account save was cancelled."));
+  });
 }
 
 function isNetworkError(error) {
@@ -534,7 +561,7 @@ function renderDashboard(dashboard) {
       return `<article class="account-card">
         <div class="account-card-head">
           <div class="bank-mark color-${index % 4}">${escapeHtml(shortName)}</div>
-          <div class="bank-info"><strong>${escapeHtml(account.bankName)}</strong><span>${account.recentExpenses.length ? `${account.recentExpenses.length} recent expense${account.recentExpenses.length === 1 ? "" : "s"}` : "Ready to track"}</span></div>
+          <div class="bank-info"><strong>${escapeHtml(account.bankName)}</strong><span>${String(account.id).startsWith("local:") ? "Waiting to sync" : account.recentExpenses.length ? `${account.recentExpenses.length} recent expense${account.recentExpenses.length === 1 ? "" : "s"}` : "Ready to track"}</span></div>
           <div class="bank-balance"><strong>${money(account.balance)}</strong><span>Remaining balance</span></div>
         </div>
         <div class="account-divider"></div>
@@ -544,8 +571,8 @@ function renderDashboard(dashboard) {
         <div class="account-card-foot">
           <span>${money(account.spent)} spent ${periodNames[state.period]}</span>
           <div class="account-actions">
-            <a class="export-link" href="/api/accounts/${account.id}/export?${queryString()}">↓ Export Excel</a>
-            <button class="remove-account" data-account-id="${account.id}" data-bank-name="${escapeHtml(account.bankName)}" type="button">Remove</button>
+            ${String(account.id).startsWith("local:") ? `<span class="export-link" aria-label="Export available after sync">Exports available after sync</span>` : `<a class="export-link" href="/api/accounts/${account.id}/export?${queryString()}">↓ Export Excel</a>`}
+            <button class="remove-account" data-account-id="${account.id}" data-bank-name="${escapeHtml(account.bankName)}" type="button" ${String(account.id).startsWith("local:") ? "disabled title=\"Available after sync\"" : ""}>${String(account.id).startsWith("local:") ? "Pending" : "Remove"}</button>
           </div>
         </div>
       </article>`;
@@ -556,7 +583,7 @@ function renderDashboard(dashboard) {
 }
 
 function drawAccountChart(account) {
-  const canvas = $(`#chart-${account.id}`);
+  const canvas = document.getElementById(`chart-${account.id}`);
   if (!canvas) return;
   const context = canvas.getContext("2d");
   const size = 112;
@@ -626,19 +653,50 @@ async function submitForm(form, url, successMessage, onSuccess) {
   const formData = new FormData(form);
   const body = Object.fromEntries(formData.entries());
   if (body.amount !== undefined) body.amount = Number(body.amount);
-  if (body.accountId !== undefined) body.accountId = Number(body.accountId);
+  if (body.accountId !== undefined && Number.isFinite(Number(body.accountId))) {
+    body.accountId = Number(body.accountId);
+  }
   if (body.categoryId !== undefined) body.categoryId = Number(body.categoryId);
   const isExpense = url === "/api/expenses";
-  if (isExpense) body.clientRequestId = crypto.randomUUID();
+  const isAccount = url === "/api/accounts";
+  if (isExpense || isAccount) body.clientRequestId = crypto.randomUUID();
+  const localAccount = isExpense && String(body.accountId).startsWith("local:");
   try {
+    if (localAccount) throw new TypeError("Account is waiting to sync.");
     await api(url, { method: "POST", body: JSON.stringify(body) });
   } catch (error) {
     if (!isNetworkError(error)) {
       showToast(error.message, true);
       return;
     }
+    if (isAccount) {
+      try {
+        const snapshot = await loadOfflineSnapshot();
+        if (!snapshot) throw new Error("Connect to the internet once before adding an offline bank account.");
+        const localAccountId = `local:${body.clientRequestId}`;
+        await saveOfflineAccount({
+          id: localAccountId,
+          bankName: String(body.bankName).trim(),
+          balance: Number(body.balance)
+        }, {
+          id: body.clientRequestId,
+          profileId,
+          type: "create-account",
+          localAccountId,
+          body,
+          createdAt: new Date().toISOString()
+        });
+        form.closest("dialog").close();
+        form.reset();
+        await onSuccess();
+        showToast("Bank account saved on this device. It will sync when you're back online.");
+      } catch (storageError) {
+        showToast(storageError.message, true);
+      }
+      return;
+    }
     if (!isExpense) {
-      showToast("Bank account and category changes need an internet connection.", true);
+      showToast("Category changes need an internet connection.", true);
       return;
     }
     try {
@@ -677,8 +735,20 @@ async function syncPendingMutations() {
     const mutations = await getPendingMutations();
     for (const mutation of mutations) {
       try {
-        if (mutation.type === "create-expense") {
-          await api("/api/expenses", { method: "POST", body: JSON.stringify(mutation.body) });
+        if (mutation.type === "create-account") {
+          const account = await api("/api/accounts", {
+            method: "POST",
+            body: JSON.stringify(mutation.body)
+          });
+          await saveSetting(`account:${mutation.localAccountId}`, account.id);
+        } else if (mutation.type === "create-expense") {
+          const body = { ...mutation.body };
+          if (String(body.accountId).startsWith("local:")) {
+            const serverAccountId = await getSetting(`account:${body.accountId}`);
+            if (!serverAccountId) throw new Error("Waiting for the new bank account to sync.");
+            body.accountId = serverAccountId;
+          }
+          await api("/api/expenses", { method: "POST", body: JSON.stringify(body) });
         } else if (mutation.type === "delete-expense") {
           await api(`/api/expenses/${mutation.expenseId}`, { method: "DELETE" });
         }
@@ -847,6 +917,10 @@ $("#expense-rows").addEventListener("click", async (event) => {
 $("#accounts-grid").addEventListener("click", async (event) => {
   const button = event.target.closest("[data-account-id]");
   if (!button) return;
+  if (String(button.dataset.accountId).startsWith("local:")) {
+    showToast("This new account must sync before it can be removed.", true);
+    return;
+  }
   const confirmed = window.confirm(
     `Remove ${button.dataset.bankName} and permanently delete all of its expenses?`
   );

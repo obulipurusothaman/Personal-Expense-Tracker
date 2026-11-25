@@ -10,8 +10,8 @@
   <title>Pennywise — Personal finance</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/icons/pennywise-192.png">
-  <link rel="stylesheet" href="/styles.css?v=12">
-  <script src="/app.js?v=12" defer></script>
+  <link rel="stylesheet" href="/styles.css?v=13">
+  <script src="/app.js?v=13" defer></script>
 </head>
 <body>
   <main id="startup-screen" class="startup-screen" aria-live="polite">
@@ -167,7 +167,7 @@
       <div class="modal-header"><div><div class="eyebrow">YOUR MONEY, TOGETHER</div><h2>Add a bank account</h2></div><button type="button" class="close-button" data-close="account-dialog" aria-label="Close">×</button></div>
       <label class="field-label">Bank name<input name="bankName" maxlength="80" required placeholder="e.g. HDFC Bank"></label>
       <label class="field-label">Starting balance <span class="field-suffix">INR</span><input name="balance" type="number" min="0" step="0.01" required placeholder="0.00"></label>
-      <p class="field-help">Enter the balance before the expenses you want to track. Manual and imported expenses reduce this amount.</p>
+      <p class="field-help">Enter the balance before the expenses you want to track. Manual and imported expenses reduce this amount. Accounts added offline are saved on this device and sync when you reconnect.</p>
       <div class="modal-actions"><button type="button" class="button button-quiet" data-close="account-dialog">Cancel</button><button class="button button-primary" type="submit">Add account</button></div>
     </form>
   </dialog>

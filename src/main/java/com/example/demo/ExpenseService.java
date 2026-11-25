@@ -36,9 +36,17 @@ public class ExpenseService {
 
 	@Transactional
 	public AccountDto createAccount(AppUser owner, AccountRequest request) {
+		if (request.clientRequestId() != null) {
+			BankAccount existing = accountRepository
+					.findByOwner_IdAndClientRequestId(owner.getId(), request.clientRequestId())
+					.orElse(null);
+			if (existing != null) {
+				return AccountDto.from(existing);
+			}
+		}
 		BankAccount account = accountRepository.save(
 				new BankAccount(request.bankName().trim(), request.balance(),
-						userRepository.getReferenceById(owner.getId())));
+						userRepository.getReferenceById(owner.getId()), request.clientRequestId()));
 		return AccountDto.from(account);
 	}
 
